@@ -1,0 +1,12 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true
+  },
+  "exclude": [
+    "App.tsx",
+    "src/local-types.ts",
+    "src/screens/**/*",
+    "src/app/screens/**/*"
+  ]
+}

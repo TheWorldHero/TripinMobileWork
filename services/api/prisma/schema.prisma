@@ -1,0 +1,348 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum TripKind {
+  TRAVEL
+  LIFESTYLE
+  MIXED
+}
+
+enum TripStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum Visibility {
+  PRIVATE
+  PUBLIC
+  UNLISTED
+}
+
+enum PointSource {
+  AUTO
+  MANUAL
+  HYBRID
+}
+
+enum PlaceProvider {
+  AMAP
+  MANUAL
+  IMPORTED
+}
+
+enum MediaStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum PostStatus {
+  ACTIVE
+  HIDDEN
+  ARCHIVED
+}
+
+model User {
+  id          String            @id
+  username    String?           @unique
+  displayName String
+  avatarUrl   String?
+  bio         String?
+  status      UserStatus        @default(ACTIVE)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  trips       Trip[]
+  mediaAssets MediaAsset[]
+  posts       Post[]
+  likes       PostLike[]
+  saves       PostSave[]
+  comments    Comment[]
+  impressions FeedImpression[]
+  events      UserActionEvent[]
+  points      Point[]
+}
+
+model Place {
+  id               String      @id @default(cuid())
+  provider         PlaceProvider
+  providerId       String?
+  name             String
+  shortName        String?
+  formattedAddress String?
+  provinceName     String?
+  cityName         String?
+  districtName     String?
+  countryCode      String      @default("CN")
+  latitude         Decimal?    @db.Decimal(10, 7)
+  longitude        Decimal?    @db.Decimal(10, 7)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  tripPoints       TripPoint[]
+  points           Point[]
+
+  @@unique([provider, providerId])
+  @@index([name])
+  @@index([cityName])
+}
+
+model Trip {
+  id           String       @id @default(cuid())
+  ownerId      String
+  title        String
+  summary      String?
+  kind         TripKind     @default(MIXED)
+  status       TripStatus   @default(DRAFT)
+  visibility   Visibility   @default(PRIVATE)
+  isLine       Boolean      @default(false)
+  cityName     String?
+  provinceName String?
+  countryCode  String       @default("CN")
+  coverMediaId String?
+  startedAt    DateTime?
+  endedAt      DateTime?
+  isCompleted  Boolean      @default(false)
+  totalDistanceMeters BigInt @default(0)
+  totalDurationSeconds BigInt @default(0)
+  pointCount   Int          @default(0)
+  mediaCount   Int          @default(0)
+  routePreview Json?
+  publishedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  owner        User         @relation(fields: [ownerId], references: [id])
+  coverMedia   MediaAsset?  @relation("TripCoverMedia", fields: [coverMediaId], references: [id])
+  points       TripPoint[]
+  linePoints   LinePoint[]
+  routeSegments RouteSegment[]
+  mediaAssets  MediaAsset[] @relation("TripMediaAssets")
+  post         Post?
+  events       UserActionEvent[]
+
+  @@index([ownerId, status, updatedAt])
+  @@index([visibility, publishedAt])
+}
+
+model TripPoint {
+  id              String       @id @default(cuid())
+  tripId          String
+  placeId         String?
+  title           String?
+  note            String?
+  customPlaceName String?
+  startedAt       DateTime
+  endedAt         DateTime?
+  latitude        Decimal?     @db.Decimal(10, 7)
+  longitude       Decimal?     @db.Decimal(10, 7)
+  sequence        Int
+  sourceType      PointSource  @default(HYBRID)
+  mediaCount      Int          @default(0)
+  addressSnapshot Json?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  trip            Trip         @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  place           Place?       @relation(fields: [placeId], references: [id])
+  mediaAssets     MediaAsset[]
+
+  @@unique([tripId, sequence])
+  @@index([tripId, startedAt])
+}
+
+model Point {
+  id                String       @id @default(cuid())
+  ownerId           String
+  placeId           String?
+  title             String?
+  note              String?
+  capturedAt        DateTime?
+  checkInAt         DateTime?
+  latitude          Decimal?     @db.Decimal(10, 7)
+  longitude         Decimal?     @db.Decimal(10, 7)
+  mediaCount        Int          @default(0)
+  mediaAssetIds     Json?
+  addressSnapshot   Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  owner             User         @relation(fields: [ownerId], references: [id])
+  place             Place?       @relation(fields: [placeId], references: [id])
+  linePoints        LinePoint[]
+  routeSegmentsFrom RouteSegment[] @relation("RouteSegmentFromPoint")
+  routeSegmentsTo   RouteSegment[] @relation("RouteSegmentToPoint")
+
+  @@index([ownerId, createdAt])
+  @@index([placeId])
+}
+
+model LinePoint {
+  id          String   @id @default(cuid())
+  lineId      String
+  pointId     String
+  sequence    Int
+  arrivalAt   DateTime?
+  departureAt DateTime?
+  isLocked    Boolean  @default(false)
+  line        Trip     @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  point       Point    @relation(fields: [pointId], references: [id], onDelete: Cascade)
+
+  @@unique([lineId, sequence])
+  @@index([lineId, sequence])
+  @@index([pointId])
+}
+
+model RouteSegment {
+  id              String   @id @default(cuid())
+  lineId          String
+  fromPointId     String
+  toPointId       String
+  provider        String
+  distanceMeters  BigInt   @default(0)
+  durationSeconds BigInt   @default(0)
+  polyline        String
+  strategy        String
+  rawRoutePayload  Json?
+  generatedAt     DateTime @default(now())
+  line            Trip     @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  fromPoint       Point    @relation("RouteSegmentFromPoint", fields: [fromPointId], references: [id])
+  toPoint         Point    @relation("RouteSegmentToPoint", fields: [toPointId], references: [id])
+
+  @@index([lineId])
+  @@index([fromPointId, toPointId])
+}
+
+model MediaAsset {
+  id            String       @id @default(cuid())
+  ownerId       String
+  tripId        String?
+  tripPointId   String?
+  storageKey    String
+  bucket        String
+  originalName  String
+  mimeType      String
+  bytes         Int
+  width         Int?
+  height        Int?
+  takenAt       DateTime?
+  exifLatitude  Decimal?     @db.Decimal(10, 7)
+  exifLongitude Decimal?     @db.Decimal(10, 7)
+  caption       String?
+  status        MediaStatus  @default(PENDING)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  owner         User         @relation(fields: [ownerId], references: [id])
+  trip          Trip?        @relation("TripMediaAssets", fields: [tripId], references: [id])
+  tripPoint     TripPoint?   @relation(fields: [tripPointId], references: [id])
+  coverForTrips Trip[]       @relation("TripCoverMedia")
+  coverForPosts Post[]       @relation("PostCoverMedia")
+
+  @@index([ownerId, createdAt])
+  @@index([tripId, tripPointId])
+  @@index([takenAt])
+}
+
+model Post {
+  id          String      @id @default(cuid())
+  tripId       String      @unique
+  authorId     String
+  title        String
+  summary      String?
+  cityName     String?
+  coverMediaId String?
+  pointCount   Int         @default(0)
+  mediaCount   Int         @default(0)
+  status       PostStatus  @default(ACTIVE)
+  visibility   Visibility  @default(PUBLIC)
+  publishedAt  DateTime    @default(now())
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  author       User        @relation(fields: [authorId], references: [id])
+  trip         Trip        @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  coverMedia   MediaAsset? @relation("PostCoverMedia", fields: [coverMediaId], references: [id])
+  likes        PostLike[]
+  saves        PostSave[]
+  comments     Comment[]
+  impressions  FeedImpression[]
+  events       UserActionEvent[]
+
+  @@index([status, visibility, publishedAt])
+  @@index([authorId, publishedAt])
+}
+
+model PostLike {
+  id        String   @id @default(cuid())
+  postId     String
+  userId     String
+  createdAt  DateTime @default(now())
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model PostSave {
+  id        String   @id @default(cuid())
+  postId     String
+  userId     String
+  createdAt  DateTime @default(now())
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId     String
+  userId     String
+  content    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model FeedImpression {
+  id        String   @id @default(cuid())
+  userId     String?
+  postId     String
+  source     String
+  position   Int?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([postId, createdAt])
+}
+
+model UserActionEvent {
+  id        String   @id @default(cuid())
+  userId     String?
+  tripId     String?
+  postId     String?
+  eventType  String
+  payload    Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  trip       Trip?    @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  post       Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([postId, createdAt])
+  @@index([tripId, createdAt])
+}

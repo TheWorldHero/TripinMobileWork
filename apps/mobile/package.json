@@ -1,0 +1,41 @@
+{
+  "name": "mobile",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --go",
+    "start:android": "expo start --go --android",
+    "start:dev-client": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "export:web": "expo export --platform web",
+    "prebuild:android": "expo prebuild --platform android --no-install",
+    "config": "expo config --type prebuild"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~6.1.2",
+    "expo": "~54.0.33",
+    "expo-file-system": "~19.0.21",
+    "expo-image-picker": "~17.0.10",
+    "expo-location": "~19.0.8",
+    "expo-modules-core": "~3.0.29",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.0",
+    "react-native-webview": "^13.16.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "private": true,
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  }
+}

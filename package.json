@@ -1,0 +1,30 @@
+{
+  "name": "tripin",
+  "private": true,
+  "workspaces": [
+    "services/api",
+    "apps/web",
+    "apps/mobile"
+  ],
+  "scripts": {
+    "dev:api": "services\\api-java\\start-local.cmd",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:mobile": "npm --workspace apps/mobile run start",
+    "start:mobile": "npm --workspace apps/mobile run start",
+    "start:mobile:android": "npm --workspace apps/mobile run start:android",
+    "start:all": "powershell -ExecutionPolicy Bypass -File .\\start-tripin.ps1",
+    "start:api": "services\\api-java\\start-local.cmd",
+    "serve:mobile": "python -m http.server 8081 --directory apps/mobile/dist",
+    "build:api": "mvn -f services/api-java/pom.xml -Dmaven.repo.local=.m2repo compile",
+    "build:web": "npm --workspace apps/web run build",
+    "build:mobile": "npm --workspace apps/mobile run export:web",
+    "build:all": "npm run build:api && npm run build:mobile",
+    "package:api": "mvn -f services/api-java/pom.xml -Dmaven.repo.local=.m2repo package -DskipTests",
+    "db:init": "powershell -ExecutionPolicy Bypass -Command \"Get-Content 'services/api-java/src/main/resources/schema.sql' -Raw | docker exec -i tripin-postgres psql -U tripin -d tripin\"",
+    "mobile:prebuild:android": "npm --workspace apps/mobile exec -- expo prebuild --platform android --no-install",
+    "mobile:config": "npm --workspace apps/mobile exec -- expo config --type prebuild",
+    "prisma:generate": "npm --workspace services/api run prisma:generate",
+    "prisma:migrate": "npm --workspace services/api run prisma:migrate:dev",
+    "db:up": "docker compose up -d"
+  }
+}

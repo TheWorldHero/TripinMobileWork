@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: tripin-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tripin
+      POSTGRES_USER: tripin
+      POSTGRES_PASSWORD: tripin
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/api-java/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/10-tripin-schema.sql:ro
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: tripin-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
