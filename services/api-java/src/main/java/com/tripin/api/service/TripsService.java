@@ -2,6 +2,7 @@ package com.tripin.api.service;
 
 import com.tripin.api.cache.PostCacheService;
 import com.tripin.api.cache.RedisBloomFilter;
+import com.tripin.api.event.PostPublishedEvent;
 import com.tripin.api.support.DbSupport;
 import com.tripin.api.support.GeoSupport;
 import com.tripin.api.support.JsonSupport;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -32,6 +34,7 @@ public class TripsService {
   private final TransactionTemplate transactionTemplate;
   private final RedisBloomFilter postBloomFilter;
   private final PostCacheService postCache;
+  private final ApplicationEventPublisher events;
 
   public TripsService(
       DbSupport db,
@@ -40,7 +43,8 @@ public class TripsService {
       MediaService mediaService,
       TransactionTemplate transactionTemplate,
       RedisBloomFilter postBloomFilter,
-      PostCacheService postCache) {
+      PostCacheService postCache,
+      ApplicationEventPublisher events) {
     this.db = db;
     this.json = json;
     this.userService = userService;
@@ -48,6 +52,7 @@ public class TripsService {
     this.transactionTemplate = transactionTemplate;
     this.postBloomFilter = postBloomFilter;
     this.postCache = postCache;
+    this.events = events;
   }
 
   public Map<String, Object> createTrip(String userId, CreateTripRequest request) {
@@ -675,6 +680,27 @@ public class TripsService {
               postParams);
 
           logEvent(userId, "trip_published", Map.of("visibility", visibility), tripId, null);
+
+          // Publish a domain event from inside the transaction. The actual Kafka send happens
+          // in PostEventListener after AFTER_COMMIT, so a rollback cancels the broadcast.
+          Map<String, Object> postRow =
+              db.first(
+                  "select id from \"Post\" where \"tripId\" = :tripId", Map.of("tripId", tripId));
+          if (postRow != null) {
+            String publishedPostId = json.stringValue(postRow.get("id"));
+            events.publishEvent(
+                PostPublishedEvent.newEvent(
+                    publishedPostId,
+                    tripId,
+                    userId,
+                    title,
+                    summary,
+                    json.stringValue(trip.get("city_name")),
+                    visibility,
+                    json.intValue(trip.get("point_count")),
+                    json.intValue(trip.get("media_count")),
+                    Instant.now()));
+          }
         });
 
     Map<String, Object> publishedPost =
