@@ -1,5 +1,7 @@
 package com.tripin.api.service;
 
+import com.tripin.api.cache.PostCacheService;
+import com.tripin.api.cache.RedisBloomFilter;
 import com.tripin.api.support.DbSupport;
 import com.tripin.api.support.GeoSupport;
 import com.tripin.api.support.JsonSupport;
@@ -28,18 +30,24 @@ public class TripsService {
   private final UserService userService;
   private final MediaService mediaService;
   private final TransactionTemplate transactionTemplate;
+  private final RedisBloomFilter postBloomFilter;
+  private final PostCacheService postCache;
 
   public TripsService(
       DbSupport db,
       JsonSupport json,
       UserService userService,
       MediaService mediaService,
-      TransactionTemplate transactionTemplate) {
+      TransactionTemplate transactionTemplate,
+      RedisBloomFilter postBloomFilter,
+      PostCacheService postCache) {
     this.db = db;
     this.json = json;
     this.userService = userService;
     this.mediaService = mediaService;
     this.transactionTemplate = transactionTemplate;
+    this.postBloomFilter = postBloomFilter;
+    this.postCache = postCache;
   }
 
   public Map<String, Object> createTrip(String userId, CreateTripRequest request) {
@@ -668,6 +676,14 @@ public class TripsService {
 
           logEvent(userId, "trip_published", Map.of("visibility", visibility), tripId, null);
         });
+
+    Map<String, Object> publishedPost =
+        db.first("select id from \"Post\" where \"tripId\" = :tripId", Map.of("tripId", tripId));
+    if (publishedPost != null) {
+      String publishedPostId = json.stringValue(publishedPost.get("id"));
+      postBloomFilter.add(publishedPostId);
+      postCache.invalidate(publishedPostId);
+    }
 
     return getTrip(userId, tripId);
   }

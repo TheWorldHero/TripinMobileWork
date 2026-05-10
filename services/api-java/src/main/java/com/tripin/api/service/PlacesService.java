@@ -29,16 +29,19 @@ public class PlacesService {
   private final ObjectMapper objectMapper;
   private final HttpClient httpClient = HttpClient.newHttpClient();
   private final String amapKey;
+  private final String stadiaKey;
 
   public PlacesService(
       DbSupport db,
       JsonSupport json,
       ObjectMapper objectMapper,
-      @Value("${AMAP_WEB_SERVICE_KEY:}") String amapKey) {
+      @Value("${AMAP_WEB_SERVICE_KEY:}") String amapKey,
+      @Value("${STADIA_MAPS_API_KEY:}") String stadiaKey) {
     this.db = db;
     this.json = json;
     this.objectMapper = objectMapper;
     this.amapKey = amapKey == null ? "" : amapKey.trim();
+    this.stadiaKey = stadiaKey == null ? "" : stadiaKey.trim();
   }
 
   public Map<String, Object> upsert(CreatePlaceRequest request) {
@@ -198,13 +201,148 @@ public class PlacesService {
     return Map.of("amapConfigured", !amapKey.isBlank());
   }
 
+  /**
+   * IP-based geolocation. Used as a fallback for clients without GMS
+   * (FusedLocationProvider) so they at least get a city-level position.
+   * AMap returns a bounding rectangle for the resolved city; we use its
+   * center as the latitude/longitude.
+   */
+  public Map<String, Object> ipLocation(String clientIp) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("amapConfigured", !amapKey.isBlank());
+    result.put("ip", clientIp);
+    result.put("latitude", null);
+    result.put("longitude", null);
+    result.put("provinceName", null);
+    result.put("cityName", null);
+    result.put("districtName", null);
+    result.put("formattedAddress", null);
+    result.put("source", "amap-ip");
+
+    if (amapKey.isBlank()) {
+      return result;
+    }
+
+    StringBuilder url = new StringBuilder("https://restapi.amap.com/v3/ip?key=").append(encode(amapKey));
+    // Pass the client IP only when it's a public-looking address. Loopback /
+    // private ranges trigger AMap's "non-China IP" code, so let AMap fall back
+    // to its own auto-detect (usually returns the request's source IP).
+    if (clientIp != null && !clientIp.isBlank() && !isPrivateIp(clientIp)) {
+      url.append("&ip=").append(encode(clientIp));
+    }
+
+    JsonNode payload;
+    try {
+      payload = fetchAmapJson(url.toString());
+    } catch (Exception ignore) {
+      return result;
+    }
+
+    String province = textOrNull(payload.path("province"));
+    String city = textOrNull(payload.path("city"));
+    String adcode = textOrNull(payload.path("adcode"));
+    String rectangle = textOrNull(payload.path("rectangle"));
+
+    result.put("provinceName", province);
+    result.put("cityName", city);
+    if (adcode != null) {
+      result.put("adcode", adcode);
+    }
+
+    if (rectangle != null) {
+      // AMap rectangle = "lng1,lat1;lng2,lat2" — diagonal bounds. Center is the
+      // midpoint, which is roughly the city/area center for instant-record use.
+      String[] corners = rectangle.split(";");
+      if (corners.length == 2) {
+        try {
+          String[] sw = corners[0].split(",");
+          String[] ne = corners[1].split(",");
+          double lng1 = Double.parseDouble(sw[0]);
+          double lat1 = Double.parseDouble(sw[1]);
+          double lng2 = Double.parseDouble(ne[0]);
+          double lat2 = Double.parseDouble(ne[1]);
+          result.put("latitude", (lat1 + lat2) / 2.0);
+          result.put("longitude", (lng1 + lng2) / 2.0);
+        } catch (NumberFormatException | ArrayIndexOutOfBoundsException ignore) {
+          // Leave nulls.
+        }
+      }
+    }
+
+    if (province != null || city != null) {
+      String formatted = (province == null ? "" : province) + (city == null || city.equals(province) ? "" : city);
+      result.put("formattedAddress", formatted.isBlank() ? null : formatted);
+    }
+
+    return result;
+  }
+
+  private static String textOrNull(JsonNode node) {
+    if (node == null || node.isMissingNode() || node.isNull()) return null;
+    String text = node.asText();
+    return text == null || text.isBlank() ? null : text;
+  }
+
+  private static boolean isPrivateIp(String ip) {
+    if (ip == null) return true;
+    String trimmed = ip.trim();
+    if (trimmed.isEmpty()) return true;
+    if (trimmed.equals("127.0.0.1") || trimmed.equalsIgnoreCase("::1") || trimmed.equalsIgnoreCase("localhost")) return true;
+    if (trimmed.startsWith("10.")) return true;
+    if (trimmed.startsWith("192.168.")) return true;
+    // 172.16.0.0 – 172.31.255.255
+    if (trimmed.startsWith("172.")) {
+      String[] parts = trimmed.split("\\.");
+      if (parts.length >= 2) {
+        try {
+          int second = Integer.parseInt(parts[1]);
+          if (second >= 16 && second <= 31) return true;
+        } catch (NumberFormatException ignore) {
+          // fall through
+        }
+      }
+    }
+    return false;
+  }
+
   public byte[] staticMap(String route, String focus, Integer rawWidth, Integer rawHeight, Boolean traffic) {
+    return staticMap(route, focus, rawWidth, rawHeight, traffic, null, null, null, null, null, null);
+  }
+
+  public byte[] staticMap(
+      String route,
+      String focus,
+      Integer rawWidth,
+      Integer rawHeight,
+      Boolean traffic,
+      Double centerLng,
+      Double centerLat,
+      Integer zoom,
+      Boolean hideMarkers,
+      Boolean hidePaths,
+      String provider) {
+    int width = clamp(rawWidth, 720, 160, 1024);
+    int height = clamp(rawHeight, 420, 160, 1024);
+
+    if ("stadia".equalsIgnoreCase(provider)) {
+      if (stadiaKey.isBlank()) {
+        return "STADIA_MAPS_API_KEY is not configured yet.".getBytes(StandardCharsets.UTF_8);
+      }
+      double lng = centerLng != null ? centerLng : 116.397428;
+      double lat = centerLat != null ? centerLat : 39.90923;
+      int z = zoom != null ? clamp(zoom, 12, 3, 18) : 12;
+      String stadiaUrl =
+          "https://tiles.stadiamaps.com/static/stamen_watercolor.png"
+              + "?center=" + lat + "," + lng
+              + "&zoom=" + z
+              + "&size=" + width + "x" + height
+              + "&api_key=" + encode(stadiaKey);
+      return fetchBinary(stadiaUrl);
+    }
+
     if (amapKey.isBlank()) {
       return "AMAP_WEB_SERVICE_KEY is not configured yet.".getBytes(StandardCharsets.UTF_8);
     }
-
-    int width = clamp(rawWidth, 720, 160, 1024);
-    int height = clamp(rawHeight, 420, 160, 1024);
     StringBuilder url =
         new StringBuilder(
             "https://restapi.amap.com/v3/staticmap?key="
@@ -219,19 +357,28 @@ public class PlacesService {
     if (!isBlank(route)) {
       List<String> routePoints = List.of(route.split("\\|"));
       String encodedRoute = String.join(";", routePoints);
-      url.append("&paths=").append(encode("8,0x11443f,0.95,,:".concat(encodedRoute)));
+      if (!Boolean.TRUE.equals(hidePaths)) {
+        url.append("&paths=").append(encode("8,0x11443f,0.95,,:".concat(encodedRoute)));
+      }
 
-      List<String> markers = new ArrayList<>();
-      String start = routePoints.getFirst();
-      String end = routePoints.getLast();
-      markers.add("large,0x173f39,S:" + start);
-      if (routePoints.size() > 2) {
-        markers.add("small,0x11443f,:" + String.join(";", routePoints.subList(1, routePoints.size() - 1)));
+      if (!Boolean.TRUE.equals(hideMarkers)) {
+        List<String> markers = new ArrayList<>();
+        String start = routePoints.getFirst();
+        String end = routePoints.getLast();
+        markers.add("large,0x173f39,S:" + start);
+        if (routePoints.size() > 2) {
+          markers.add("small,0x11443f,:" + String.join(";", routePoints.subList(1, routePoints.size() - 1)));
+        }
+        if (routePoints.size() > 1) {
+          markers.add("large,0xD9B67D,E:" + end);
+        }
+        url.append("&markers=").append(encode(String.join("|", markers)));
       }
-      if (routePoints.size() > 1) {
-        markers.add("large,0xD9B67D,E:" + end);
+
+      if (centerLng != null && centerLat != null && zoom != null) {
+        url.append("&location=").append(centerLng).append(",").append(centerLat);
+        url.append("&zoom=").append(clamp(zoom, 12, 3, 18));
       }
-      url.append("&markers=").append(encode(String.join("|", markers)));
     } else if (!isBlank(focus)) {
       url.append("&location=").append(encode(focus));
       url.append("&zoom=15");

@@ -12,7 +12,7 @@ export default (): ExpoConfig => {
   };
 
   return {
-    name: 'TripIn',
+    name: 'Tripin',
     slug: 'tripin-mobile',
     version: '1.0.0',
     orientation: 'portrait',

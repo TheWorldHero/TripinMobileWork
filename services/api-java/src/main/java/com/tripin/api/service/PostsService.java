@@ -1,5 +1,7 @@
 package com.tripin.api.service;
 
+import com.tripin.api.cache.PostCacheService;
+import com.tripin.api.cache.RedisBloomFilter;
 import com.tripin.api.support.DbSupport;
 import com.tripin.api.support.JsonSupport;
 import java.util.LinkedHashMap;
@@ -15,16 +17,44 @@ public class PostsService {
   private final JsonSupport json;
   private final UserService userService;
   private final TripsService tripsService;
+  private final RedisBloomFilter postBloomFilter;
+  private final PostCacheService postCache;
 
-  public PostsService(DbSupport db, JsonSupport json, UserService userService, TripsService tripsService) {
+  public PostsService(
+      DbSupport db,
+      JsonSupport json,
+      UserService userService,
+      TripsService tripsService,
+      RedisBloomFilter postBloomFilter,
+      PostCacheService postCache) {
     this.db = db;
     this.json = json;
     this.userService = userService;
     this.tripsService = tripsService;
+    this.postBloomFilter = postBloomFilter;
+    this.postCache = postCache;
   }
 
   public Map<String, Object> getPost(String viewerUserId, String postId) {
     userService.ensureExists(viewerUserId);
+
+    if (!postBloomFilter.mightContain(postId)) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found");
+    }
+
+    Map<String, Object> core = postCache.get(postId);
+    if (core == null) {
+      core = loadPostCore(postId);
+      postCache.put(postId, core);
+    }
+    postCache.recordAccess(postId);
+
+    Map<String, Object> result = new LinkedHashMap<>(core);
+    result.put("viewerState", loadViewerState(postId, viewerUserId));
+    return result;
+  }
+
+  private Map<String, Object> loadPostCore(String postId) {
     Map<String, Object> row =
         db.first(
             """
@@ -83,6 +113,10 @@ public class PostsService {
     counts.put("comments", json.intValue(row.get("comments_count")));
     result.put("counts", counts);
 
+    return result;
+  }
+
+  private Map<String, Object> loadViewerState(String postId, String viewerUserId) {
     Map<String, Object> viewerState = new LinkedHashMap<>();
     viewerState.put(
         "liked",
@@ -96,8 +130,7 @@ public class PostsService {
                 "select id from \"PostSave\" where \"postId\" = :postId and \"userId\" = :userId",
                 Map.of("postId", postId, "userId", viewerUserId))
             != null);
-    result.put("viewerState", viewerState);
-    return result;
+    return viewerState;
   }
 
   private List<Map<String, Object>> loadComments(String postId) {

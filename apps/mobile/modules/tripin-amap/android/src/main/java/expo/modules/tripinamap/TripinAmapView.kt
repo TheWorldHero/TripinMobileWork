@@ -1,8 +1,9 @@
 package expo.modules.tripinamap
 
 import android.content.Context
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
-import android.widget.LinearLayout
+import android.widget.FrameLayout
 import com.amap.api.maps.CameraUpdateFactory
 import com.amap.api.maps.MapView
 import com.amap.api.maps.MapsInitializer
@@ -14,15 +15,19 @@ import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.views.ExpoView
 
 class TripinAmapView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
-  private val mapView = MapView(context)
+  // AMap 8.1+ requires the privacy compliance calls *before* any MapView is constructed.
+  // Field init order would create MapView too early, so use a backing var initialized
+  // lazily inside init {} after the privacy calls run.
+  private val mapView: MapView
   private var markers: List<Map<String, Any?>> = emptyList()
   private var polylines: List<Map<String, Any?>> = emptyList()
 
   init {
-    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
-    mapView.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
     MapsInitializer.updatePrivacyShow(context, true, true)
     MapsInitializer.updatePrivacyAgree(context, true)
+    mapView = MapView(context)
+    layoutParams = ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+    mapView.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
     mapView.onCreate(null)
     mapView.map.isTrafficEnabled = false
     mapView.map.uiSettings.isZoomControlsEnabled = false

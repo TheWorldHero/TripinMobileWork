@@ -1,5 +1,6 @@
 import type {
   CreatePlaceDto,
+  AuthResponse,
   CreateMediaAssetDto,
   CreateTripDto,
   CreateTripPointDto,
@@ -24,6 +25,13 @@ import type {
 interface ApiClientOptions {
   baseUrl: string;
   userId: string;
+  // Returns the current access token, or null if not signed in. Each request reads it fresh
+  // so the caller can rotate tokens (e.g. after refresh) without rebuilding the client.
+  getAuthToken?: () => string | null | undefined;
+  // Called when a request comes back 401 with an existing token. Should obtain a new access
+  // token (e.g. via refresh) and return it, or return null to give up. The request will be
+  // retried once with the new token. Implementing this is optional.
+  onUnauthorized?: () => Promise<string | null>;
 }
 
 function toNumber(value: number | string | null | undefined): number | null {
@@ -158,15 +166,34 @@ function normalizeLineDetail(raw: {
 export function createApiClient(options: ApiClientOptions) {
   const normalizedBaseUrl = options.baseUrl.replace(/\/+$/, '');
 
+  function buildHeaders(extra?: HeadersInit, overrideToken?: string | null): HeadersInit {
+    const token = overrideToken !== undefined ? overrideToken : options.getAuthToken?.() ?? null;
+    const base: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-user-id': options.userId,
+    };
+    if (token) {
+      base.Authorization = `Bearer ${token}`;
+    }
+    return { ...base, ...((extra as Record<string, string>) ?? {}) };
+  }
+
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${normalizedBaseUrl}${path}`, {
+    const initialToken = options.getAuthToken?.() ?? null;
+    let response = await fetch(`${normalizedBaseUrl}${path}`, {
       ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': options.userId,
-        ...(init?.headers ?? {}),
-      },
+      headers: buildHeaders(init?.headers, initialToken),
     });
+
+    if (response.status === 401 && initialToken && options.onUnauthorized) {
+      const newToken = await options.onUnauthorized();
+      if (newToken) {
+        response = await fetch(`${normalizedBaseUrl}${path}`, {
+          ...init,
+          headers: buildHeaders(init?.headers, newToken),
+        });
+      }
+    }
 
     if (!response.ok) {
       const message = await response.text();
@@ -183,6 +210,36 @@ export function createApiClient(options: ApiClientOptions) {
     getCurrentUser() {
       return request<UserSummary>('/users/me');
     },
+    login(payload: { identifier: string; password: string }) {
+      return request<AuthResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    },
+    register(payload: {
+      email?: string;
+      username: string;
+      displayName: string;
+      password: string;
+      bio?: string;
+    }) {
+      return request<AuthResponse>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    },
+    refreshTokens(refreshToken: string) {
+      return request<AuthResponse>('/auth/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+      });
+    },
+    logout(refreshToken?: string | null) {
+      return request<{ ok: boolean }>('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+      });
+    },
     updateCurrentUser(payload: {
       username?: string;
       displayName?: string;
@@ -193,6 +250,9 @@ export function createApiClient(options: ApiClientOptions) {
         method: 'PATCH',
         body: JSON.stringify(payload),
       });
+    },
+    getUser(userId: string) {
+      return request<UserSummary>(`/users/${userId}`);
     },
     getUserPosts(userId: string) {
       return request<FeedResponse['items']>(`/users/${userId}/posts`);
@@ -294,6 +354,19 @@ export function createApiClient(options: ApiClientOptions) {
       }
 
       return request<ReverseGeocodeResponse>(`/places/reverse-geocode?${params.toString()}`);
+    },
+    getIpLocation() {
+      return request<{
+        amapConfigured: boolean;
+        ip: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        provinceName: string | null;
+        cityName: string | null;
+        districtName: string | null;
+        formattedAddress: string | null;
+        source: string;
+      }>('/places/ip-location');
     },
     upsertPlace(dto: CreatePlaceDto) {
       return request<{ id: string } & Record<string, unknown>>('/places', {

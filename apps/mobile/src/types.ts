@@ -19,6 +19,17 @@ export interface UserSummary {
   bio?: string | null;
 }
 
+export interface AuthResponse {
+  user: UserSummary;
+  sessionUserId: string;
+  issuedAt: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenType?: string;
+  accessExpiresAt?: string;
+  refreshExpiresAt?: string;
+}
+
 export interface MediaAsset {
   id: string;
   originalName: string;

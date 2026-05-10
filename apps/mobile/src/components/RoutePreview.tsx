@@ -7,6 +7,7 @@ interface RoutePreviewProps {
   height?: number;
   selectedPointId?: string | null;
   onPointPress?: (pointId: string) => void;
+  flat?: boolean;
 }
 
 interface RenderPoint {
@@ -58,6 +59,7 @@ export const RoutePreview = memo(function RoutePreview({
   height = 180,
   selectedPointId,
   onPointPress,
+  flat = false,
 }: RoutePreviewProps) {
   const [boardWidth, setBoardWidth] = useState(320);
   const routePoints = points ?? [];
@@ -71,14 +73,18 @@ export const RoutePreview = memo(function RoutePreview({
   }
 
   return (
-    <View style={[styles.board, { height }]} onLayout={handleLayout}>
-      <View style={styles.gridBackground} />
-      <View style={styles.glowTopRight} />
-      <View style={styles.glowBottomLeft} />
-      <View style={styles.gridVerticalA} />
-      <View style={styles.gridVerticalB} />
-      <View style={styles.gridHorizontalA} />
-      <View style={styles.gridHorizontalB} />
+    <View style={[styles.board, flat && styles.boardFlat, { height }]} onLayout={handleLayout}>
+      {!flat ? (
+        <>
+          <View style={styles.gridBackground} />
+          <View style={styles.glowTopRight} />
+          <View style={styles.glowBottomLeft} />
+          <View style={styles.gridVerticalA} />
+          <View style={styles.gridVerticalB} />
+          <View style={styles.gridHorizontalA} />
+          <View style={styles.gridHorizontalB} />
+        </>
+      ) : null}
 
       {!renderPoints.length ? (
         <View style={styles.placeholderWrap}>
@@ -174,6 +180,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e0d2bf',
     position: 'relative',
+  },
+  boardFlat: {
+    borderRadius: 0,
+    backgroundColor: '#FAFAF7',
+    borderWidth: 0,
   },
   gridBackground: {
     ...StyleSheet.absoluteFillObject,

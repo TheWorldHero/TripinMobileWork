@@ -4,14 +4,19 @@ setlocal
 set "ROOT_DIR=%~dp0..\..\"
 pushd "%ROOT_DIR%"
 
-set "API_JAVA_HOME=D:\DevTools\Java\MicrosoftJDK21"
-if exist "%API_JAVA_HOME%\bin\java.exe" (
-  set "JAVA_HOME=%API_JAVA_HOME%"
-  set "PATH=%JAVA_HOME%\bin;%PATH%"
+if defined API_JAVA_HOME (
+  if exist "%API_JAVA_HOME%\bin\java.exe" (
+    set "JAVA_HOME=%API_JAVA_HOME%"
+    set "PATH=%JAVA_HOME%\bin;%PATH%"
+  )
 )
 
+if not defined JAVA_HOME (
+  echo JAVA_HOME is not set. Install JDK 21 and set JAVA_HOME, or set API_JAVA_HOME to override for this project.
+  exit /b 1
+)
 if not exist "%JAVA_HOME%\bin\java.exe" (
-  echo JDK 21 was not found. Expected: %API_JAVA_HOME%
+  echo JAVA_HOME points to %JAVA_HOME% but no java.exe found there.
   exit /b 1
 )
 

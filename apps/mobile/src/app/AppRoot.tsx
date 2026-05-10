@@ -1,15 +1,31 @@
+import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useFonts } from 'expo-font';
+import {
+  BricolageGrotesque_500Medium,
+  BricolageGrotesque_700Bold,
+} from '@expo-google-fonts/bricolage-grotesque';
+import {
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_700Bold,
+} from '@expo-google-fonts/plus-jakarta-sans';
+import type * as React from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
+  Dimensions,
   Image,
+  KeyboardAvoidingView,
   LogBox,
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -18,17 +34,46 @@ import {
   View,
 } from 'react-native';
 
+const PRIMARY = '#1F4FE0';
+const PRIMARY_TINT = '#E8EEFF';
+const PRIMARY_DARK = '#1A3FB8';
+
+// Instagram-inspired feed redesign tokens
+const TINT = '#FF5C39';
+const TINT_SOFT = '#FFE6DD';
+const INK = '#0E0E0E';
+const INK_SOFT = '#3A3A33';
+const PAPER = '#FAFAF7';
+const HAIRLINE = '#EBEBE5';
+const MUTED = '#9A9A93';
+const FONT_DISPLAY = 'BricolageGrotesque_700Bold';
+const FONT_DISPLAY_MED = 'BricolageGrotesque_500Medium';
+const FONT_BODY = 'PlusJakartaSans_400Regular';
+const FONT_BODY_MED = 'PlusJakartaSans_500Medium';
+const FONT_BODY_BOLD = 'PlusJakartaSans_700Bold';
+
+import { DateTimePickerField } from '../components/DateTimePickerField';
 import { RoutePreview } from '../components/RoutePreview';
 import { createApiClient } from '../lib/api';
+import { clearAuth, loadAuth, saveAuth } from '../lib/auth-storage';
 import { TripinMapView } from '../native/TripinMapView';
-import type { FeedItem, MediaAsset, PostDetail, Trip, TripPoint, UserSummary } from '../types';
+import type { AuthResponse, FeedItem, MediaAsset, PlaceSearchResult, PostDetail, Trip, TripPoint, UserSummary } from '../types';
 
-const API_BASE_URL =
-  Platform.OS === 'android' ? 'http://10.0.2.2:3001/api/v1' : 'http://localhost:3001/api/v1';
-const WEB_BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
-const USER_ID = 'demo-user';
+// EXPO_PUBLIC_API_HOST overrides the dev defaults at build/runtime time.
+// For a Release APK pointing to the cloud, set it in apps/mobile/.env before building.
+const API_HOST =
+  (process.env.EXPO_PUBLIC_API_HOST ?? '').trim() ||
+  (Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001');
+const API_BASE_URL = `${API_HOST}/api/v1`;
+// Uploaded media is served back as static files at /api/uploads/<...> by the same API.
+// We previously had a separate Next.js Web service on port 3000 for this; uploads now
+// go through the API directly, so we just need the API host + context path.
+const WEB_BASE_URL = `${API_HOST}/api`;
+const DEFAULT_USER_ID = 'demo-user';
 
 type TabKey = 'record' | 'home' | 'studio' | 'me';
+type AuthMode = 'login' | 'register';
+type StudioPanel = 'overview' | 'create' | 'manage';
 type MePanel =
   | 'overview'
   | 'profile'
@@ -39,6 +84,12 @@ type MePanel =
   | 'privacy'
   | 'help'
   | 'settings';
+
+interface AuthorProfileState {
+  user: UserSummary;
+  posts: FeedItem[];
+  loading: boolean;
+}
 
 type LocalImage = {
   uri: string;
@@ -69,6 +120,14 @@ type PointEditForm = {
   note: string;
 };
 
+type AuthForm = {
+  identifier: string;
+  email: string;
+  username: string;
+  displayName: string;
+  password: string;
+};
+
 const initialForm: DraftForm = {
   title: '我的路线',
   summary: '',
@@ -84,6 +143,14 @@ const initialPointEditForm: PointEditForm = {
   location: '',
   startedAt: new Date().toISOString().slice(0, 16),
   note: '',
+};
+
+const initialAuthForm: AuthForm = {
+  identifier: 'demo-user',
+  email: '',
+  username: '',
+  displayName: '',
+  password: '',
 };
 
 type TripImageEntry = {
@@ -145,7 +212,7 @@ function toLocalInputValue(value?: string | null) {
 
 function defaultPublishWindow(points: TripPoint[]) {
   const times = points
-    .filter(hasUsableCoordinate)
+    .filter(isPublishablePoint)
     .map(pointTimeMs)
     .filter((time) => time > 0)
     .sort((left, right) => left - right);
@@ -156,6 +223,13 @@ function defaultPublishWindow(points: TripPoint[]) {
   };
 }
 
+function isPublishablePoint(point: TripPoint): boolean {
+  // Publishable when the point either has a real coordinate, or the user has
+  // confirmed it through the editor (sourceType=MANUAL). Auto temp points that
+  // have never been touched still need a coordinate to count.
+  return hasUsableCoordinate(point) || point.sourceType === 'MANUAL';
+}
+
 function pointsInTimeWindow(points: TripPoint[], start: string, end: string, excludedIds: string[]) {
   const parsedStart = start ? new Date(start).getTime() : Number.NaN;
   const parsedEnd = end ? new Date(end).getTime() : Number.NaN;
@@ -164,7 +238,7 @@ function pointsInTimeWindow(points: TripPoint[], start: string, end: string, exc
   const excluded = new Set(excludedIds);
 
   return points
-    .filter(hasUsableCoordinate)
+    .filter(isPublishablePoint)
     .filter((point) => {
       const time = pointTimeMs(point);
       return time >= startTime && time <= endTime && !excluded.has(point.id);
@@ -267,16 +341,33 @@ async function pickImages() {
   });
 }
 
-async function getCurrentCoordinate() {
+async function getCurrentCoordinate(options?: { fast?: boolean }) {
   try {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (!permission.granted) {
       return null;
     }
 
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
+    // First: take whatever the OS already has cached. No accuracy filter — even
+    // a 10-minute-old, 1km-accurate fix is still "where you are" for an instant
+    // record. The user can correct it later in 完善点位.
+    const cached = await Location.getLastKnownPositionAsync({ maxAge: 600_000 });
+    if (cached) {
+      return { latitude: cached.coords.latitude, longitude: cached.coords.longitude };
+    }
+
+    // Cold-start with no cache: ask the OS for a fresh fix. Balanced accuracy
+    // uses WiFi + cell towers without waiting for GPS satellites, so this
+    // usually returns within a few seconds. We give it 20s before giving up
+    // (was 9s — too tight for cold-start indoors / weak signal).
+    const location = await Promise.race([
+      Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), options?.fast ? 20000 : 25000)),
+    ]);
+
+    if (!location) return null;
 
     return {
       latitude: location.coords.latitude,
@@ -295,7 +386,8 @@ async function uploadImageToWeb(image: LocalImage) {
     type: image.mimeType,
   } as unknown as Blob);
 
-  const response = await fetch(`${WEB_BASE_URL}/api/uploads`, {
+  // Java API exposes the upload endpoint at /v1/uploads under the /api context path.
+  const response = await fetch(`${API_BASE_URL}/uploads`, {
     method: 'POST',
     body: formData,
   });
@@ -313,8 +405,79 @@ async function uploadImageToWeb(image: LocalImage) {
 }
 
 export default function AppRoot() {
-  const api = useMemo(() => createApiClient({ baseUrl: API_BASE_URL, userId: USER_ID }), []);
+  const [fontsLoaded] = useFonts({
+    BricolageGrotesque_500Medium,
+    BricolageGrotesque_700Bold,
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_700Bold,
+  });
+  const [sessionUserId, setSessionUserId] = useState<string | null>(DEFAULT_USER_ID);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState<string | null>(null);
+  const tokenRef = useRef<{ access: string | null; refresh: string | null }>({
+    access: null,
+    refresh: null,
+  });
+  useEffect(() => {
+    tokenRef.current = { access: accessToken, refresh: refreshToken };
+  }, [accessToken, refreshToken]);
+  const apiRef = useRef<ReturnType<typeof createApiClient> | null>(null);
+  const refreshingRef = useRef(false);
+  const api = useMemo(() => {
+    const client = createApiClient({
+      baseUrl: API_BASE_URL,
+      userId: sessionUserId ?? DEFAULT_USER_ID,
+      getAuthToken: () => tokenRef.current.access,
+      onUnauthorized: async () => {
+        // Recursion guard: while a refresh is already in flight, additional 401s wait it out
+        // (returning null means the original request gives up rather than retrying).
+        if (refreshingRef.current) return null;
+        const currentRefresh = tokenRef.current.refresh;
+        const client = apiRef.current;
+        if (!currentRefresh || !client) return null;
+        refreshingRef.current = true;
+        try {
+          const result = await client.refreshTokens(currentRefresh);
+          const newAccess = result.accessToken ?? null;
+          const newRefresh = result.refreshToken ?? null;
+          if (newAccess && newRefresh) {
+            tokenRef.current = { access: newAccess, refresh: newRefresh };
+            setAccessToken(newAccess);
+            setRefreshToken(newRefresh);
+            saveAuth({
+              userId: result.user.id,
+              accessToken: newAccess,
+              refreshToken: newRefresh,
+              accessExpiresAt: result.accessExpiresAt ?? null,
+              refreshExpiresAt: result.refreshExpiresAt ?? null,
+            });
+            return newAccess;
+          }
+          return null;
+        } catch {
+          // Refresh itself failed (e.g. refresh expired or revoked) — drop the session.
+          tokenRef.current = { access: null, refresh: null };
+          setAccessToken(null);
+          setRefreshToken(null);
+          setSessionUserId(null);
+          clearAuth();
+          return null;
+        } finally {
+          refreshingRef.current = false;
+        }
+      },
+    });
+    apiRef.current = client;
+    return client;
+  }, [sessionUserId]);
   const [activeTab, setActiveTab] = useState<TabKey>('home');
+  const [studioVisited, setStudioVisited] = useState(false);
+  useEffect(() => {
+    if (activeTab === 'studio' && !studioVisited) setStudioVisited(true);
+  }, [activeTab, studioVisited]);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authForm, setAuthForm] = useState<AuthForm>(initialAuthForm);
   const [currentUser, setCurrentUser] = useState<UserSummary | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [postDetails, setPostDetails] = useState<Record<string, PostDetail>>({});
@@ -327,6 +490,8 @@ export default function AppRoot() {
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentText, setCommentText] = useState('');
   const [mePanel, setMePanel] = useState<MePanel>('overview');
+  const [studioPanel, setStudioPanel] = useState<StudioPanel>('overview');
+  const [authorProfile, setAuthorProfile] = useState<AuthorProfileState | null>(null);
   const [profileForm, setProfileForm] = useState({ displayName: '', username: '', bio: '' });
   const [form, setForm] = useState<DraftForm>(initialForm);
   const [pickedImages, setPickedImages] = useState<LocalImage[]>([]);
@@ -336,6 +501,9 @@ export default function AppRoot() {
   const [pointEditForm, setPointEditForm] = useState<PointEditForm>(initialPointEditForm);
   const [pointEditCoordinate, setPointEditCoordinate] = useState<Coordinate | null>(null);
   const [selectedCoordinate, setSelectedCoordinate] = useState<Coordinate | null>(null);
+  const [placeSearchQuery, setPlaceSearchQuery] = useState('');
+  const [placeSearchResults, setPlaceSearchResults] = useState<PlaceSearchResult[]>([]);
+  const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishStart, setPublishStart] = useState('');
   const [publishEnd, setPublishEnd] = useState('');
@@ -346,26 +514,237 @@ export default function AppRoot() {
 
   useEffect(() => {
     LogBox.ignoreAllLogs(true);
-    void refreshAll();
+    // Pre-warm location: as soon as the app launches, ask the OS for a fix in
+    // the background. By the time the user taps "即时记录" the OS usually has
+    // a cached position ready, so getLastKnownPositionAsync returns instantly.
+    void Location.requestForegroundPermissionsAsync()
+      .then((permission) => {
+        if (!permission.granted) return;
+        return Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      })
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadAuth().then((stored) => {
+      if (cancelled || !stored) return;
+      tokenRef.current = { access: stored.accessToken, refresh: stored.refreshToken };
+      setAccessToken(stored.accessToken);
+      setRefreshToken(stored.refreshToken);
+      setSessionUserId(stored.userId);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sessionUserId) {
+      void refreshAll();
+    } else {
+      clearUserData();
+      setLoading(false);
+    }
+  }, [sessionUserId]);
 
   useEffect(() => {
     if (!message) return undefined;
 
+    // Longer messages (failure explanations like "20 秒内没拿到位置...") need
+    // more time to read. Scale roughly 60ms/char, clamp to 3-8s.
+    const ms = Math.min(8000, Math.max(3200, message.length * 60));
     const timeout = setTimeout(() => {
       setMessage('');
-    }, 3200);
+    }, ms);
 
     return () => clearTimeout(timeout);
   }, [message]);
 
+  const backNavRef = useRef({
+    publishOpen,
+    recordOpen,
+    editingPoint,
+    selectedPost,
+    mePanel,
+    activeTab,
+  });
+  backNavRef.current = { publishOpen, recordOpen, editingPoint, selectedPost, mePanel, activeTab };
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      const s = backNavRef.current;
+      if (s.publishOpen) {
+        setPublishOpen(false);
+        return true;
+      }
+      if (s.recordOpen) {
+        setRecordOpen(false);
+        return true;
+      }
+      if (s.editingPoint) {
+        setEditingPoint(null);
+        setPointEditForm(initialPointEditForm);
+        setPointEditCoordinate(null);
+        return true;
+      }
+      if (s.selectedPost) {
+        setSelectedPost(null);
+        return true;
+      }
+      if (s.mePanel !== 'overview') {
+        setMePanel('overview');
+        return true;
+      }
+      if (s.activeTab !== 'home') {
+        setActiveTab('home');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, []);
+
   function goHome() {
     setSelectedPost(null);
     setMePanel('overview');
+    setStudioPanel('overview');
+    setAuthorProfile(null);
     setActiveTab('home');
   }
 
+  function handleOpenAuthor(author: UserSummary) {
+    if (currentUser && author.id === currentUser.id) {
+      setSelectedPost(null);
+      setAuthorProfile(null);
+      setMePanel('overview');
+      setActiveTab('me');
+      return;
+    }
+    setAuthorProfile({ user: author, posts: [], loading: true });
+    runTask(async () => {
+      try {
+        const [user, posts] = await Promise.all([
+          api.getUser(author.id).catch(() => author),
+          api.getUserPosts(author.id).catch(() => [] as FeedItem[]),
+        ]);
+        setAuthorProfile({ user, posts, loading: false });
+      } catch (error) {
+        setAuthorProfile({ user: author, posts: [], loading: false });
+        setMessage(error instanceof Error ? error.message : '加载作者信息失败。');
+      }
+    });
+  }
+
+  function closeAuthorProfile() {
+    setAuthorProfile(null);
+  }
+
+  function clearUserData() {
+    setCurrentUser(null);
+    setFeedItems([]);
+    setPostDetails({});
+    setFeedCommentTexts({});
+    setSavedItems([]);
+    setPublishedItems([]);
+    setTrips([]);
+    setDraftTrip(null);
+    setSelectedPost(null);
+    setExpandedComments({});
+    setCommentText('');
+    setMePanel('overview');
+    setPickedImages([]);
+    setRecordImages([]);
+    setRecordOpen(false);
+    setPublishOpen(false);
+    setExcludedPublishPointIds([]);
+    setStudioPanel('overview');
+    setAuthorProfile(null);
+    setActiveTab('home');
+  }
+
+  function handleLogout() {
+    const currentRefresh = tokenRef.current.refresh;
+    if (currentRefresh) {
+      // Best-effort server-side revocation. Don't await — UI shouldn't wait on the network.
+      void api.logout(currentRefresh).catch(() => undefined);
+    }
+    tokenRef.current = { access: null, refresh: null };
+    setAccessToken(null);
+    setRefreshToken(null);
+    clearAuth();
+    setSessionUserId(null);
+    setAuthMode('login');
+    setAuthForm((current) => ({
+      ...initialAuthForm,
+      identifier: current.identifier || current.username || DEFAULT_USER_ID,
+    }));
+    setMessage('已退出账号，可以登录其他账号测试。');
+  }
+
+  function applyAuthResult(result: AuthResponse) {
+    setCurrentUser(result.user);
+    if (result.accessToken && result.refreshToken) {
+      tokenRef.current = { access: result.accessToken, refresh: result.refreshToken };
+      setAccessToken(result.accessToken);
+      setRefreshToken(result.refreshToken);
+      saveAuth({
+        userId: result.user.id,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        accessExpiresAt: result.accessExpiresAt ?? null,
+        refreshExpiresAt: result.refreshExpiresAt ?? null,
+      });
+    }
+    setSessionUserId(result.sessionUserId);
+  }
+
+  function handleAuthSubmit() {
+    const password = authForm.password.trim();
+    if (!password) {
+      setMessage('请输入密码。');
+      return;
+    }
+
+    runTask(async () => {
+      if (authMode === 'login') {
+        const identifier = authForm.identifier.trim();
+        if (!identifier) {
+          setMessage('请输入用户名或邮箱。');
+          return;
+        }
+        const result = await api.login({ identifier, password });
+        applyAuthResult(result);
+        setAuthForm((current) => ({ ...current, password: '' }));
+        setMessage(`已登录：${result.user.displayName}`);
+        return;
+      }
+
+      const username = authForm.username.trim();
+      const displayName = authForm.displayName.trim();
+      if (!username || !displayName) {
+        setMessage('注册需要用户名和昵称。');
+        return;
+      }
+      const result = await api.register({
+        email: authForm.email.trim() || undefined,
+        username,
+        displayName,
+        password,
+      });
+      applyAuthResult(result);
+      setAuthForm({ ...initialAuthForm, identifier: result.user.username || username });
+      setMessage(`已注册并登录：${result.user.displayName}`);
+    });
+  }
+
   async function refreshAll(targetTripId?: string) {
+    if (!sessionUserId) {
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const [health, feed, tripList, user] = await Promise.all([
@@ -484,19 +863,18 @@ export default function AppRoot() {
   }
 
   async function createMediaAssets(trip: Trip, images: LocalImage[]) {
-    const medias: MediaAsset[] = [];
-    for (const image of images) {
-      const uploaded = await uploadImageToWeb(image);
-      const created = await api.createMediaAsset({
-        originalName: uploaded.originalName,
-        mimeType: uploaded.mimeType,
-        bytes: uploaded.bytes,
-        tripId: trip.id,
-      });
-      const ready = (await api.markMediaReady(created.id, uploaded.storageKey)) as MediaAsset;
-      medias.push(ready);
-    }
-    return medias;
+    return Promise.all(
+      images.map(async (image) => {
+        const uploaded = await uploadImageToWeb(image);
+        const created = await api.createMediaAsset({
+          originalName: uploaded.originalName,
+          mimeType: uploaded.mimeType,
+          bytes: uploaded.bytes,
+          tripId: trip.id,
+        });
+        return (await api.markMediaReady(created.id, uploaded.storageKey)) as MediaAsset;
+      }),
+    );
   }
 
   async function clonePointMediaAssets(targetTrip: Trip, point: TripPoint) {
@@ -532,13 +910,109 @@ export default function AppRoot() {
     });
   }
 
-  function handleMapPress(coordinate: Coordinate) {
+  function handleSearchPlaces() {
+    const keyword = placeSearchQuery.trim();
+    if (!keyword) {
+      setMessage('先输入要搜索的地点。');
+      return;
+    }
+    setPlaceSearchLoading(true);
+    runTask(async () => {
+      try {
+        const results = await api.searchPlaces({ keyword, limit: 10 });
+        setPlaceSearchResults(results);
+        if (!results.length) {
+          setMessage('没找到匹配的地点，换个关键词试试。');
+        }
+      } catch (error) {
+        setPlaceSearchResults([]);
+        setMessage(error instanceof Error ? error.message : '搜索地点失败。');
+      } finally {
+        setPlaceSearchLoading(false);
+      }
+    });
+  }
+
+  function handleSelectPlaceFromSearch(place: PlaceSearchResult) {
+    const lat = numericCoordinate(place.latitude);
+    const lng = numericCoordinate(place.longitude);
+    if (lat === null || lng === null) {
+      setMessage('该地点缺少坐标，无法定位。');
+      return;
+    }
+    setSelectedCoordinate({ latitude: lat, longitude: lng });
+    setForm((current) => ({ ...current, pointLocation: place.name }));
+    setPlaceSearchResults([]);
+    setPlaceSearchQuery('');
+    setMessage(`已定位到：${place.name}`);
+  }
+
+  function handleMapPress(payload: {
+    latitude: number;
+    longitude: number;
+    address?: string;
+    cityName?: string;
+    districtName?: string;
+    provinceName?: string;
+  }) {
+    const coordinate: Coordinate = {
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+    };
     setSelectedCoordinate(coordinate);
+
+    // Build a friendly name from whatever the WebView's reverse-geocoder returned.
+    // Order: full address > city+district > city > district > province > coords.
+    const cityDistrict = [payload.cityName, payload.districtName]
+      .filter((s) => Boolean(s && s.trim()))
+      .join(' ');
+    const fromWebView =
+      (payload.address && payload.address.trim()) ||
+      (cityDistrict.trim()) ||
+      (payload.cityName && payload.cityName.trim()) ||
+      (payload.districtName && payload.districtName.trim()) ||
+      (payload.provinceName && payload.provinceName.trim()) ||
+      '';
+
+    if (fromWebView) {
+      setForm((current) => ({ ...current, pointLocation: fromWebView }));
+      setMessage(`已选中：${fromWebView}`);
+      return;
+    }
+
+    // WebView didn't give us a name (no Geocoder plugin / failed). Try backend.
     setForm((current) => ({
       ...current,
-      pointLocation: `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`,
+      pointLocation: `定位中... (${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)})`,
     }));
-    setMessage('已选中地图位置，填写点位信息后点击生成点位。');
+    setMessage('已选中地图位置，正在查询地名…');
+    runTask(async () => {
+      try {
+        const result = await api.reverseGeocode({
+          latitude: coordinate.latitude,
+          longitude: coordinate.longitude,
+        });
+        const fallbackCityDistrict = [result.cityName, result.districtName]
+          .filter((s) => Boolean(s && s.trim()))
+          .join(' ');
+        const name =
+          result.recommendedPlace?.name?.trim() ||
+          result.formattedAddress?.trim() ||
+          fallbackCityDistrict ||
+          result.cityName?.trim() ||
+          result.districtName?.trim() ||
+          result.provinceName?.trim() ||
+          `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`;
+        setForm((current) => ({ ...current, pointLocation: name }));
+        setMessage(`已选中：${name}`);
+      } catch {
+        setForm((current) => ({
+          ...current,
+          pointLocation: `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`,
+        }));
+        setMessage('暂无法解析地名，已填入经纬度，可手动改写。');
+      }
+    });
   }
 
   function openPointEditor(point: TripPoint) {
@@ -567,23 +1041,6 @@ export default function AppRoot() {
     setPointEditCoordinate(null);
   }
 
-  function handleUseCurrentLocationForEdit() {
-    runTask(async () => {
-      setMessage('正在获取当前位置...');
-      const coordinate = await getCurrentCoordinate();
-      if (!coordinate) {
-        setMessage('定位失败，请检查模拟器或浏览器的位置权限。');
-        return;
-      }
-      setPointEditCoordinate(coordinate);
-      setPointEditForm((current) => ({
-        ...current,
-        location: `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`,
-      }));
-      setMessage('已填入当前位置。');
-    });
-  }
-
   function handleSavePointEdit() {
     if (!editingPoint) return;
 
@@ -606,7 +1063,10 @@ export default function AppRoot() {
         startedAt: new Date(pointEditForm.startedAt || Date.now()).toISOString(),
         latitude: coordinate?.latitude,
         longitude: coordinate?.longitude,
-        sourceType: coordinate ? 'MANUAL' : editingPoint.sourceType,
+        // Any save through the editor counts as "user-confirmed", which makes
+        // the point eligible for publish even without a coordinate. This lets
+        // the user finalize a temp point by just renaming or noting it.
+        sourceType: 'MANUAL',
       });
       setDraftTrip(updated);
       closePointEditor();
@@ -644,8 +1104,8 @@ export default function AppRoot() {
   function handlePublish() {
     runTask(async () => {
       const trip = await ensureDraft({ verify: true });
-      if (!trip.points.some(hasUsableCoordinate)) {
-        Alert.alert('还不能发布', '至少需要一个带位置的点位才能形成路线。');
+      if (!trip.points.some(isPublishablePoint)) {
+        Alert.alert('还不能发布', '至少需要一个有坐标或已确认过的点位才能发布。');
         return;
       }
 
@@ -820,6 +1280,31 @@ export default function AppRoot() {
     });
   }
 
+  function bumpCommentCount(postId: string, comment: { id: string; content: string; createdAt: string; user: UserSummary }) {
+    setPostDetails((details) => {
+      const detail = details[postId];
+      if (!detail) return details;
+      return {
+        ...details,
+        [postId]: {
+          ...detail,
+          comments: [...detail.comments, comment],
+          counts: {
+            ...detail.counts,
+            comments: detail.counts.comments + 1,
+          },
+        },
+      };
+    });
+    const bump = (item: FeedItem) =>
+      item.id === postId
+        ? { ...item, _count: { ...item._count, comments: item._count.comments + 1 } }
+        : item;
+    setFeedItems((items) => items.map(bump));
+    setSavedItems((items) => items.map(bump));
+    setPublishedItems((items) => items.map(bump));
+  }
+
   function handleCreateComment(postId: string) {
     const content = commentText.trim();
     if (!content) {
@@ -829,28 +1314,7 @@ export default function AppRoot() {
 
     runTask(async () => {
       const comment = await api.createComment(postId, content);
-      setPostDetails((details) => {
-        const detail = details[postId];
-        if (!detail) return details;
-        return {
-          ...details,
-          [postId]: {
-            ...detail,
-            comments: [...detail.comments, comment],
-            counts: {
-              ...detail.counts,
-              comments: detail.counts.comments + 1,
-            },
-          },
-        };
-      });
-      setFeedItems((items) =>
-        items.map((item) =>
-          item.id === postId
-            ? { ...item, _count: { ...item._count, comments: item._count.comments + 1 } }
-            : item,
-        ),
-      );
+      bumpCommentCount(postId, comment);
       setCommentText('');
       setExpandedComments((current) => ({ ...current, [postId]: true }));
       setMessage('评论已发布。');
@@ -866,28 +1330,7 @@ export default function AppRoot() {
 
     runTask(async () => {
       const comment = await api.createComment(postId, content);
-      setPostDetails((details) => {
-        const detail = details[postId];
-        if (!detail) return details;
-        return {
-          ...details,
-          [postId]: {
-            ...detail,
-            comments: [...detail.comments, comment],
-            counts: {
-              ...detail.counts,
-              comments: detail.counts.comments + 1,
-            },
-          },
-        };
-      });
-      setFeedItems((items) =>
-        items.map((item) =>
-          item.id === postId
-            ? { ...item, _count: { ...item._count, comments: item._count.comments + 1 } }
-            : item,
-        ),
-      );
+      bumpCommentCount(postId, comment);
       setFeedCommentTexts((current) => ({ ...current, [postId]: '' }));
       setMessage('评论已发布。');
     });
@@ -906,91 +1349,319 @@ export default function AppRoot() {
   }
 
   function handleInstantRecord() {
+    const images = recordImages;
+    setRecordImages([]);
+    setRecordOpen(false);
     runTask(async () => {
-      setMessage('正在获取当前位置并生成临时点位...');
-      const trip = await ensureDraft({ verify: true });
-      const currentCoordinate = await getCurrentCoordinate();
-      const coordinate = currentCoordinate ?? (await getCoordinateForNewPoint(trip.points.length + 1, trip.points));
-      const medias = await createMediaAssets(trip, recordImages);
+      // Step 1: explicit permission check, with a clear message if it's denied.
+      // Avoid the silent "no location, save anyway" outcome when the underlying
+      // problem is just the user never tapped Allow.
+      setMessage('检查位置权限...');
+      const permission = await Location.requestForegroundPermissionsAsync().catch(() => ({
+        granted: false,
+        canAskAgain: false,
+      }));
+
+      // Step 2: actually try to get a fix — wait long enough for cold-start GPS.
+      // Cached first (instant), then fresh fix (up to 20s). The user clicked
+      // a button labelled "获取位置并生成", so they expect us to try hard.
+      let coordinate: Coordinate | null = null;
+      let locationFailureReason: string | null = null;
+      let locationSource: 'gps' | 'ip' | null = null;
+      let locationLabelHuman: string | null = null;
+
+      if (!permission.granted) {
+        locationFailureReason = permission.canAskAgain
+          ? '没有位置权限。到系统设置 → 应用 → Tripin → 权限里允许后再试。'
+          : '位置权限被拒。系统设置 → 应用 → Tripin → 权限 → 位置 → 允许。';
+      } else {
+        setMessage('正在获取位置...');
+        try {
+          // Try OS cache first.
+          const cached = await Location.getLastKnownPositionAsync({ maxAge: 600_000 });
+          if (cached) {
+            coordinate = { latitude: cached.coords.latitude, longitude: cached.coords.longitude };
+            locationSource = 'gps';
+          } else {
+            // Cold-start: wait up to 20s for a real fix. We only fall back
+            // to "no location" after this actually times out.
+            const fresh = await Promise.race([
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 20000)),
+            ]);
+            if (fresh) {
+              coordinate = { latitude: fresh.coords.latitude, longitude: fresh.coords.longitude };
+              locationSource = 'gps';
+            } else {
+              locationFailureReason = '20 秒内没拿到位置（GPS 还没锁星）。';
+            }
+          }
+        } catch (err) {
+          // expo-location uses Google Play Services on Android. On Huawei /
+          // HMS-only devices it throws "SERVICE_INVALID". Fall through to IP
+          // geolocation so the user still gets at least a city-level point.
+          locationFailureReason =
+            err instanceof Error ? `系统定位不可用：${err.message}` : '系统定位不可用。';
+        }
+
+        // Fallback: if device-side location didn't work, ask the backend for an
+        // IP-based fix. Accuracy is only city-level but it's better than nothing
+        // and works on any device with internet (no GMS / HMS required).
+        if (!coordinate) {
+          setMessage('设备定位失败，使用 IP 定位中…');
+          try {
+            const ipResult = await api.getIpLocation();
+            if (
+              typeof ipResult.latitude === 'number' &&
+              typeof ipResult.longitude === 'number'
+            ) {
+              coordinate = { latitude: ipResult.latitude, longitude: ipResult.longitude };
+              locationSource = 'ip';
+              locationLabelHuman = ipResult.formattedAddress || ipResult.cityName || '当前城市';
+              locationFailureReason = null;
+            }
+          } catch {
+            // keep the original failure reason
+          }
+        }
+      }
+
+      // Step 3: now do the actual server side (draft, media, point creation).
+      setMessage(coordinate ? '保存点位中...' : '保存中（无位置）...');
+      const trip = await ensureDraft();
+      const medias = images.length ? await createMediaAssets(trip, images) : [];
+      // For IP-based fallback, prefer the readable place name over raw coords.
       const locationLabel = coordinate
-        ? `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`
+        ? (locationSource === 'ip' && locationLabelHuman
+            ? locationLabelHuman
+            : `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`)
         : undefined;
+      const noteByPath =
+        locationSource === 'gps'
+          ? '临时点位，来自即时记录，请及时完善信息。'
+          : locationSource === 'ip'
+            ? '临时点位，来自即时记录（IP 粗略定位），请到完善点位里改成具体地点。'
+            : '临时点位，来自即时记录，待补充位置。';
       const updated = await api.createTripPoint(trip.id, {
         title: `临时点位 ${trip.points.length + 1}`,
         customPlaceName: locationLabel,
-        note: coordinate ? '临时点位，来自即时记录，请及时完善信息。' : '临时点位，来自即时记录，待补充位置。',
+        note: noteByPath,
         startedAt: new Date().toISOString(),
         latitude: coordinate?.latitude,
         longitude: coordinate?.longitude,
         sourceType: 'AUTO',
         mediaAssetIds: medias.map((media) => media.id),
       });
-      setRecordImages([]);
-      setRecordOpen(false);
       setDraftTrip(updated);
-      await refreshAll(updated.id);
-      setActiveTab('studio');
-      setMessage('临时点位已加入点位管理。');
+      setTrips((current) => {
+        const exists = current.some((t) => t.id === updated.id);
+        return exists ? current.map((t) => (t.id === updated.id ? updated : t)) : [updated, ...current];
+      });
+
+      if (coordinate && locationSource === 'gps') {
+        setMessage(`已记录位置 ${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)}。`);
+      } else if (coordinate && locationSource === 'ip') {
+        setMessage(`已用 IP 大致定位到 ${locationLabelHuman ?? '当前城市'}。精确位置可在"完善点位"里改。`);
+      } else {
+        setMessage(locationFailureReason ?? '已记录，位置稍后到点位管理里补充。');
+      }
     });
+  }
+
+  function renderAuth() {
+    const isLogin = authMode === 'login';
+    return (
+      <ScrollView contentContainerStyle={[styles.screenContent, styles.authScreen]} keyboardShouldPersistTaps="handled">
+        <View style={styles.authHero}>
+          <Text style={styles.authKicker}>TripIn 调试登录</Text>
+          <Text style={styles.authTitle}>{isLogin ? '登录其他账号' : '注册新账号'}</Text>
+          <Text style={styles.pageSubtitle}>
+            登录后，首页、收藏、评论和工作台都会切换到对应用户，方便测试多用户效果。
+          </Text>
+        </View>
+
+        <View style={styles.panel}>
+          <View style={styles.authModeRow}>
+            <Pressable
+              style={[styles.authModeButton, isLogin ? styles.authModeButtonActive : null]}
+              onPress={() => setAuthMode('login')}
+            >
+              <Text style={[styles.authModeText, isLogin ? styles.authModeTextActive : null]}>登录</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.authModeButton, !isLogin ? styles.authModeButtonActive : null]}
+              onPress={() => setAuthMode('register')}
+            >
+              <Text style={[styles.authModeText, !isLogin ? styles.authModeTextActive : null]}>注册</Text>
+            </Pressable>
+          </View>
+
+          {isLogin ? (
+            <TextInput
+              value={authForm.identifier}
+              onChangeText={(identifier) => setAuthForm((current) => ({ ...current, identifier }))}
+              placeholder="用户名或邮箱"
+              autoCapitalize="none"
+              style={styles.input}
+            />
+          ) : (
+            <>
+              <TextInput
+                value={authForm.username}
+                onChangeText={(username) => setAuthForm((current) => ({ ...current, username }))}
+                placeholder="用户名，例如 user-a"
+                autoCapitalize="none"
+                style={styles.input}
+              />
+              <TextInput
+                value={authForm.displayName}
+                onChangeText={(displayName) => setAuthForm((current) => ({ ...current, displayName }))}
+                placeholder="昵称，例如 用户A"
+                style={styles.input}
+              />
+              <TextInput
+                value={authForm.email}
+                onChangeText={(email) => setAuthForm((current) => ({ ...current, email }))}
+                placeholder="邮箱，可不填"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                style={styles.input}
+              />
+            </>
+          )}
+
+          <TextInput
+            value={authForm.password}
+            onChangeText={(password) => setAuthForm((current) => ({ ...current, password }))}
+            placeholder="密码"
+            secureTextEntry
+            style={styles.input}
+          />
+
+          <Pressable style={styles.primaryButtonWide} onPress={handleAuthSubmit}>
+            <Text style={styles.primaryButtonText}>{isPending ? '处理中...' : isLogin ? '登录' : '注册并登录'}</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.secondaryButtonWide}
+            onPress={() => {
+              tokenRef.current = { access: null, refresh: null };
+              setAccessToken(null);
+              setRefreshToken(null);
+              clearAuth();
+              setSessionUserId(DEFAULT_USER_ID);
+              setAuthForm(initialAuthForm);
+              setMessage('已切回 Demo User。');
+            }}
+          >
+            <Text style={styles.secondaryButtonText}>使用 Demo User</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    );
   }
 
   function renderHome() {
     if (selectedPost) {
       return (
-        <ScrollView contentContainerStyle={styles.screenContent}>
-          <PostDetailView
-            post={selectedPost}
-            detail={postDetails[selectedPost.id]}
-            commentText={commentText}
-            commentsExpanded={Boolean(expandedComments[selectedPost.id])}
-            onBack={() => setSelectedPost(null)}
-            onChangeCommentText={setCommentText}
-            onToggleComments={() =>
-              setExpandedComments((current) => ({
-                ...current,
-                [selectedPost.id]: !current[selectedPost.id],
-              }))
-            }
-            onToggleLike={() => handleToggleLike(selectedPost.id)}
-            onToggleSave={() => handleToggleSave(selectedPost.id)}
-            onCreateComment={() => handleCreateComment(selectedPost.id)}
-          />
-        </ScrollView>
+        <View style={styles.flex1}>
+          <ScrollView
+            contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <PostDetailView
+              post={selectedPost}
+              detail={postDetails[selectedPost.id]}
+              commentText={commentText}
+              commentsExpanded={Boolean(expandedComments[selectedPost.id])}
+              onChangeCommentText={setCommentText}
+              onToggleComments={() =>
+                setExpandedComments((current) => ({
+                  ...current,
+                  [selectedPost.id]: !current[selectedPost.id],
+                }))
+              }
+              onToggleLike={() => handleToggleLike(selectedPost.id)}
+              onToggleSave={() => handleToggleSave(selectedPost.id)}
+              onCreateComment={() => handleCreateComment(selectedPost.id)}
+              onOpenAuthor={handleOpenAuthor}
+            />
+          </ScrollView>
+          <BackButton label="返回首页" onPress={() => setSelectedPost(null)} />
+        </View>
+      );
+    }
+
+    if (authorProfile) {
+      return (
+        <View style={styles.flex1}>
+          <ScrollView
+            contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <AuthorProfileView
+              state={authorProfile}
+              onOpenPost={(post) => {
+                setSelectedPost(post);
+                setAuthorProfile(null);
+              }}
+            />
+          </ScrollView>
+          <BackButton label="返回首页" onPress={closeAuthorProfile} />
+        </View>
       );
     }
 
     return (
-      <ScrollView contentContainerStyle={styles.screenContent}>
-        <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>TripIn</Text>
-          <Text style={styles.pageSubtitle}>发现真实地点组成的生活路线</Text>
-        </View>
-        <AppCover />
-        {feedItems.length ? (
-          feedItems.map((item) => (
-            <PostCard
-              key={item.id}
-              post={item}
-              detail={postDetails[item.id]}
-              commentText={feedCommentTexts[item.id] ?? ''}
-              onOpen={() => setSelectedPost(item)}
-              onToggleLike={() => handleToggleLike(item.id)}
-              onToggleSave={() => handleToggleSave(item.id)}
-              onChangeCommentText={(value) =>
-                setFeedCommentTexts((current) => ({ ...current, [item.id]: value }))
-              }
-              onCreateComment={() => handleCreateFeedComment(item.id)}
+      <View style={styles.feedRoot}>
+        <FeedTopBar />
+        <ScrollView
+          style={styles.feedScroll}
+          contentContainerStyle={styles.feedScrollContent}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={loading}
+              onRefresh={() => void refreshAll()}
+              tintColor={TINT}
+              colors={[TINT]}
             />
-          ))
-        ) : (
-          <EmptyMessage title="暂无内容发布" description="发布第一条路线后，这里会出现作品流。" />
-        )}
-      </ScrollView>
+          }
+        >
+          {feedItems.length ? (
+            feedItems.map((item, index) => (
+              <PostCard
+                key={item.id}
+                post={item}
+                detail={postDetails[item.id]}
+                commentText={feedCommentTexts[item.id] ?? ''}
+                isFirst={index === 0}
+                onOpen={() => setSelectedPost(item)}
+                onToggleLike={() => handleToggleLike(item.id)}
+                onToggleSave={() => handleToggleSave(item.id)}
+                onChangeCommentText={(value) =>
+                  setFeedCommentTexts((current) => ({ ...current, [item.id]: value }))
+                }
+                onCreateComment={() => handleCreateFeedComment(item.id)}
+                onOpenAuthor={handleOpenAuthor}
+              />
+            ))
+          ) : (
+            <View style={styles.feedEmpty}>
+              <Text style={styles.feedEmptyTitle}>还没有路线</Text>
+              <Text style={styles.feedEmptyBody}>
+                发布第一条路线，这里就会出现你和朋友的真实出行轨迹。
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      </View>
     );
   }
 
   function renderStudio() {
     const points = draftTrip?.points ?? [];
+    const usablePoints = points.filter(isPublishablePoint);
     const pointMarkers = points
       .map((point, index) => {
         const latitude = numericCoordinate(point.latitude);
@@ -1019,12 +1690,6 @@ export default function AppRoot() {
           },
         ]
       : pointMarkers;
-    const mapRoute = mapMarkers.map((marker, index) => ({
-      pointId: marker.id,
-      sequence: index + 1,
-      latitude: marker.latitude,
-      longitude: marker.longitude,
-    }));
     const mapPolylines =
       mapMarkers.length >= 2
         ? [
@@ -1039,116 +1704,224 @@ export default function AppRoot() {
             },
           ]
         : [];
-    return (
-      <ScrollView contentContainerStyle={styles.screenContent}>
-        <View style={styles.pageHeader}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerCopy}>
-              <Text style={styles.pageTitle}>工作台</Text>
-              <Text style={styles.pageSubtitle}>添加点位，整理成路线，再发布到主页</Text>
-            </View>
-            <Pressable style={styles.homeShortcut} hitSlop={16} onPress={goHome}>
-              <Text style={styles.homeShortcutText}>首页</Text>
-            </Pressable>
-          </View>
-        </View>
 
-        <View style={styles.mapPanel}>
-          <View style={styles.panelHeader}>
-            <View>
-              <Text style={styles.panelTitle}>地图</Text>
-              <Text style={styles.hintText}>生成点位后会在这里形成路线</Text>
+    if (studioPanel === 'overview') {
+      return (
+        <View style={styles.flex1}>
+          <ScrollView
+            contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.pageHeader}>
+              <Text style={styles.pageTitle}>工作台</Text>
+              <Text style={styles.pageSubtitle}>选择一个操作开始：先创建点位，再整理路线，最后发布作品。</Text>
             </View>
-            <Text style={styles.mapBadge}>{mapMarkers.length} 点</Text>
-          </View>
-          <View style={styles.mapFrame}>
-            {Platform.OS === 'android' ? (
-              <TripinMapView
-                style={styles.nativeMap}
-                markers={mapMarkers}
-                polylines={mapPolylines}
-                onMapPress={handleMapPress}
+
+            <StudioEntryCard
+              title="点位创建"
+              description="在地图上选位、上传图片、生成新的点位。"
+              meta={`已生成 ${points.length} 个点位${usablePoints.length ? `（${usablePoints.length} 个带坐标）` : ''}`}
+              actionLabel="开始创建"
+              onPress={() => setStudioPanel('create')}
+            />
+            <StudioEntryCard
+              title="发布作品"
+              description="选择时间段和点位，把当前路线发布到首页。"
+              meta={
+                usablePoints.length
+                  ? `当前有 ${usablePoints.length} 个可发布点位`
+                  : '至少需要 1 个带坐标的点位'
+              }
+              actionLabel="去发布"
+              disabled={!usablePoints.length}
+              onPress={() => {
+                if (!usablePoints.length) {
+                  setMessage('至少需要一个带位置的点位才能发布。');
+                  return;
+                }
+                handlePublish();
+              }}
+            />
+            <StudioEntryCard
+              title="点位管理"
+              description="查看、编辑或删除已生成的点位。"
+              meta={`共 ${points.length} 个点位`}
+              actionLabel="去管理"
+              onPress={() => setStudioPanel('manage')}
+            />
+          </ScrollView>
+          <BackButton label="返回首页" onPress={goHome} />
+        </View>
+      );
+    }
+
+    if (studioPanel === 'create') {
+      return (
+        <View style={styles.flex1}>
+          <ScrollView
+            contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.pageHeader}>
+              <Text style={styles.pageTitle}>点位创建</Text>
+              <Text style={styles.pageSubtitle}>在地图上选位，填写信息，生成新的点位。</Text>
+            </View>
+
+            <View style={styles.mapPanel}>
+              <View style={styles.panelHeader}>
+                <View>
+                  <Text style={styles.panelTitle}>地图</Text>
+                  <Text style={styles.hintText}>生成点位后会在这里形成路线</Text>
+                </View>
+                <Text style={styles.mapBadge}>{mapMarkers.length} 点</Text>
+              </View>
+
+              <View style={styles.placeSearchRow}>
+                <TextInput
+                  value={placeSearchQuery}
+                  onChangeText={setPlaceSearchQuery}
+                  placeholder="搜索地点（POI、景点、地址…）"
+                  style={[styles.input, styles.placeSearchInput]}
+                  onSubmitEditing={handleSearchPlaces}
+                  returnKeyType="search"
+                />
+                <Pressable
+                  style={styles.placeSearchButton}
+                  onPress={handleSearchPlaces}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.placeSearchButtonText}>
+                    {placeSearchLoading ? '搜索中…' : '搜索'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {placeSearchResults.length ? (
+                <View style={styles.placeSearchList}>
+                  {placeSearchResults.map((place, index) => {
+                    const key = `${place.provider}-${place.providerId ?? place.id ?? place.name}-${index}`;
+                    return (
+                      <Pressable
+                        key={key}
+                        style={styles.placeSearchItem}
+                        onPress={() => handleSelectPlaceFromSearch(place)}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.placeSearchItemTitle} numberOfLines={1}>
+                          {place.name}
+                        </Text>
+                        <Text style={styles.placeSearchItemMeta} numberOfLines={2}>
+                          {place.formattedAddress
+                            || [place.cityName, place.districtName].filter(Boolean).join(' ')
+                            || '无地址信息'}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+
+              <View style={styles.mapFrame}>
+                <TripinMapView
+                  style={styles.nativeMap}
+                  markers={mapMarkers}
+                  polylines={mapPolylines}
+                  onMapPress={handleMapPress}
+                />
+              </View>
+            </View>
+
+            <View style={styles.panel}>
+              <Text style={styles.panelTitle}>生成点位</Text>
+              <TextInput
+                value={form.pointLocation}
+                onChangeText={(pointLocation) => {
+                  setForm((current) => ({ ...current, pointLocation }));
+                  // If the user clears the field, drop any map-tap coordinate too.
+                  // If they type lat/lng, parse and use it.
+                  // Otherwise keep the existing selectedCoordinate (e.g. from a map tap).
+                  if (!pointLocation.trim()) {
+                    setSelectedCoordinate(null);
+                  } else {
+                    const fromText = coordinateFromText(pointLocation);
+                    if (fromText) {
+                      setSelectedCoordinate(fromText);
+                    }
+                  }
+                }}
+                placeholder="位置：点地图获取，或输入地点/经纬度"
+                style={styles.input}
               />
+              <TextInput
+                value={form.startedAt}
+                onChangeText={(startedAt) => setForm((current) => ({ ...current, startedAt }))}
+                placeholder="时间，例如 2026-04-28T10:30"
+                style={styles.input}
+              />
+              <TextInput
+                value={form.pointNote}
+                onChangeText={(pointNote) => setForm((current) => ({ ...current, pointNote }))}
+                placeholder="描述"
+                multiline
+                style={[styles.input, styles.textareaSmall]}
+              />
+              <View style={styles.row}>
+                <Pressable style={styles.secondaryButton} onPress={handlePickStudioImages}>
+                  <Text style={styles.secondaryButtonText}>选择图片</Text>
+                </Pressable>
+                <Pressable style={styles.primaryButton} onPress={handleAddPoint}>
+                  <Text style={styles.primaryButtonText}>生成点位</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.hintText}>
+                {pickedImages.length
+                  ? `已选择 ${pickedImages.length} 张图片`
+                  : '位置不完整也可创建；形成路线时只使用带坐标的点位'}
+              </Text>
+            </View>
+          </ScrollView>
+          <BackButton label="返回工作台" onPress={() => setStudioPanel('overview')} />
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.flex1}>
+        <ScrollView
+          contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.pageHeader}>
+            <Text style={styles.pageTitle}>点位管理</Text>
+            <Text style={styles.pageSubtitle}>查看、编辑或删除已生成的点位。</Text>
+          </View>
+
+          <View style={styles.panel}>
+            <View style={styles.panelHeader}>
+              <Text style={styles.panelTitle}>全部点位</Text>
+              <Text style={styles.hintText}>{points.length} 个点位</Text>
+            </View>
+            {points.length ? (
+              points.map((point, index) => (
+                <PointRow
+                  key={point.id}
+                  point={point}
+                  index={index}
+                  editable
+                  onEdit={() => openPointEditor(point)}
+                  onDelete={() => handleDeletePoint(point.id)}
+                />
+              ))
             ) : (
-              <RoutePreview points={mapRoute} height={260} />
+              <EmptyMessage
+                title="还没有点位"
+                description="先去『点位创建』生成点位，或从『即时记录』添加临时点位。"
+              />
             )}
           </View>
-          <Text style={styles.hintText}>
-            如果模拟器没有定位权限，生成点位会自动使用地图中心附近的临时坐标，后续可再编辑。
-          </Text>
-          {selectedCoordinate ? (
-            <Text style={styles.selectedLocationText}>
-              已选位置：{selectedCoordinate.latitude.toFixed(5)}, {selectedCoordinate.longitude.toFixed(5)}
-            </Text>
-          ) : (
-            <Text style={styles.hintText}>也可以直接点地图上的位置，再点击“生成点位”。</Text>
-          )}
-        </View>
-
-        <View style={styles.panel}>
-          <Text style={styles.panelTitle}>生成点位</Text>
-          <TextInput
-            value={form.pointLocation}
-            onChangeText={(pointLocation) => {
-              setForm((current) => ({ ...current, pointLocation }));
-              setSelectedCoordinate(coordinateFromText(pointLocation));
-            }}
-            placeholder="位置：点地图获取，或输入地点/经纬度"
-            style={styles.input}
-          />
-          <TextInput
-            value={form.startedAt}
-            onChangeText={(startedAt) => setForm((current) => ({ ...current, startedAt }))}
-            placeholder="时间，例如 2026-04-28T10:30"
-            style={styles.input}
-          />
-          <TextInput
-            value={form.pointNote}
-            onChangeText={(pointNote) => setForm((current) => ({ ...current, pointNote }))}
-            placeholder="描述"
-            multiline
-            style={[styles.input, styles.textareaSmall]}
-          />
-          <View style={styles.row}>
-            <Pressable style={styles.secondaryButton} onPress={handlePickStudioImages}>
-              <Text style={styles.secondaryButtonText}>选择图片</Text>
-            </Pressable>
-            <Pressable style={styles.primaryButton} onPress={handleAddPoint}>
-              <Text style={styles.primaryButtonText}>生成点位</Text>
-            </Pressable>
-          </View>
-          <Text style={styles.hintText}>
-            {pickedImages.length
-              ? `已选择 ${pickedImages.length} 张图片`
-              : '位置不完整也可创建；形成路线时只使用带坐标的点位'}
-          </Text>
-        </View>
-
-        <View style={styles.panel}>
-          <View style={styles.panelHeader}>
-            <Text style={styles.panelTitle}>点位管理</Text>
-            <Text style={styles.hintText}>{points.length} 个点位</Text>
-          </View>
-          {points.length ? (
-            points.map((point, index) => (
-              <PointRow
-                key={point.id}
-                point={point}
-                index={index}
-                editable
-                onEdit={() => openPointEditor(point)}
-                onDelete={() => handleDeletePoint(point.id)}
-              />
-            ))
-          ) : (
-            <EmptyMessage title="还没有点位" description="上传图片或生成点位后，会出现在这里。" />
-          )}
-        </View>
-
-        <Pressable style={styles.publishButton} onPress={handlePublish}>
-          <Text style={styles.publishButtonText}>发布作品</Text>
-        </Pressable>
-      </ScrollView>
+        </ScrollView>
+        <BackButton label="返回工作台" onPress={() => setStudioPanel('overview')} />
+      </View>
     );
   }
 
@@ -1156,7 +1929,7 @@ export default function AppRoot() {
     const draftCount = trips.filter((trip) => trip.status === 'DRAFT').length;
     const publishedCount = trips.filter((trip) => trip.status === 'PUBLISHED').length;
     const displayUser = currentUser ?? {
-      id: USER_ID,
+      id: sessionUserId ?? DEFAULT_USER_ID,
       displayName: 'Demo User',
       username: 'demo-user',
       bio: '',
@@ -1164,8 +1937,11 @@ export default function AppRoot() {
 
     if (mePanel !== 'overview') {
       return (
-        <ScrollView contentContainerStyle={styles.screenContent}>
-          <BackButton label="返回个人信息" onPress={() => setMePanel('overview')} />
+        <View style={styles.flex1}>
+          <ScrollView
+            contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+            keyboardShouldPersistTaps="handled"
+          >
           <AccountPanel
             panel={mePanel}
             user={displayUser}
@@ -1183,17 +1959,23 @@ export default function AppRoot() {
             onRemoveSaved={(postId) => handleToggleSave(postId)}
             onGoStudio={() => {
               setMePanel('overview');
+              setStudioPanel('overview');
               setActiveTab('studio');
             }}
             onRefresh={() => void refreshAll()}
           />
-        </ScrollView>
+          </ScrollView>
+          <BackButton label="返回个人信息" onPress={() => setMePanel('overview')} />
+        </View>
       );
     }
 
     return (
-      <ScrollView contentContainerStyle={styles.screenContent}>
-        <BackButton label="返回首页" onPress={goHome} />
+      <View style={styles.flex1}>
+        <ScrollView
+          contentContainerStyle={[styles.screenContent, styles.screenContentWithFloating]}
+          keyboardShouldPersistTaps="handled"
+        >
         <View style={styles.profileBlock}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{displayUser.displayName.slice(0, 1) || '我'}</Text>
@@ -1212,20 +1994,22 @@ export default function AppRoot() {
         </View>
 
         <View style={styles.accountGroup}>
-          <AccountRow title="个人信息" meta="编辑资料" icon="人" onPress={() => setMePanel('profile')} />
-          <AccountRow title="我的路线" meta={`${trips.length} 条`} icon="线" onPress={() => setMePanel('routes')} />
-          <AccountRow title="我的发布" meta={`${publishedItems.length} 条`} icon="路" onPress={() => setMePanel('posts')} />
-          <AccountRow title="收藏" meta={`${savedItems.length} 条`} icon="藏" onPress={() => setMePanel('favorites')} />
+          <AccountRow title="个人信息" meta="编辑资料" icon="person-outline" onPress={() => setMePanel('profile')} />
+          <AccountRow title="我的路线" meta={`${trips.length} 条`} icon="git-network-outline" onPress={() => setMePanel('routes')} />
+          <AccountRow title="我的发布" meta={`${publishedItems.length} 条`} icon="map-outline" onPress={() => setMePanel('posts')} />
+          <AccountRow title="收藏" meta={`${savedItems.length} 条`} icon="bookmark-outline" onPress={() => setMePanel('favorites')} />
           <AccountRow
             title="退出账号"
-            meta="当前为本地 demo"
-            icon="退"
+            meta="切换到登录页"
+            icon="log-out-outline"
             danger
-            onPress={() => setMessage('本地调试账号无需退出，关闭 App 即可。')}
+            onPress={handleLogout}
           />
         </View>
 
-      </ScrollView>
+        </ScrollView>
+        <BackButton label="返回首页" onPress={goHome} />
+      </View>
     );
   }
 
@@ -1237,10 +2021,27 @@ export default function AppRoot() {
     excludedPublishPointIds,
   );
 
+  if (!fontsLoaded) {
+    return (
+      <SafeAreaView style={[styles.app, { backgroundColor: PAPER }]}>
+        <StatusBar style="dark" />
+        <View style={styles.centerState}>
+          <ActivityIndicator color={TINT} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.app}>
       <StatusBar style="dark" />
-      {loading ? (
+      <KeyboardAvoidingView
+        style={styles.flex1}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+      {!sessionUserId ? (
+        renderAuth()
+      ) : loading ? (
         <View style={styles.centerState}>
           <ActivityIndicator />
           <Text style={styles.hintText}>正在连接本地服务...</Text>
@@ -1248,14 +2049,18 @@ export default function AppRoot() {
       ) : (
         <View style={styles.body}>
           {activeTab === 'home' ? renderHome() : null}
-          {activeTab === 'studio' ? renderStudio() : null}
+          {studioVisited ? (
+            <View style={activeTab === 'studio' ? styles.tabPaneActive : styles.tabPaneHidden}>
+              {renderStudio()}
+            </View>
+          ) : null}
           {activeTab === 'me' ? renderMe() : null}
         </View>
       )}
 
       {message ? <Text style={styles.toast}>{message}</Text> : null}
 
-      <View style={styles.bottomBar}>
+      {sessionUserId ? <View style={styles.bottomBar}>
         <TabButton label="即时记录" active={activeTab === 'record'} onPress={() => setRecordOpen(true)} />
         <Pressable
           style={[styles.plusButton, activeTab === 'studio' ? styles.homeButton : null]}
@@ -1266,6 +2071,8 @@ export default function AppRoot() {
             } else {
               setSelectedPost(null);
               setMePanel('overview');
+              setStudioPanel('overview');
+              setAuthorProfile(null);
               setActiveTab('studio');
             }
           }}
@@ -1275,19 +2082,18 @@ export default function AppRoot() {
           </Text>
         </Pressable>
         <TabButton label="个人信息" active={activeTab === 'me'} onPress={() => setActiveTab('me')} />
-      </View>
+      </View> : null}
+      </KeyboardAvoidingView>
 
       <Modal visible={publishOpen} animationType="slide" onRequestClose={() => setPublishOpen(false)}>
         <SafeAreaView style={styles.app}>
-          <ScrollView contentContainerStyle={styles.publishPage}>
-            <View style={styles.panelHeader}>
-              <View>
-                <Text style={styles.panelTitle}>发布作品</Text>
-                <Text style={styles.hintText}>填写作品信息，选择时间段，确认本次要发布的路线。</Text>
-              </View>
-              <Pressable onPress={() => setPublishOpen(false)}>
-                <Text style={styles.closeText}>关闭</Text>
-              </Pressable>
+          <ScrollView
+            contentContainerStyle={[styles.publishPage, styles.publishPageWithFloating]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View>
+              <Text style={styles.panelTitle}>发布作品</Text>
+              <Text style={styles.hintText}>填写作品信息，选择时间段，确认本次要发布的路线。</Text>
             </View>
 
             <TextInput
@@ -1311,14 +2117,8 @@ export default function AppRoot() {
             />
 
             <View style={styles.row}>
-              <View style={styles.timeField}>
-                <Text style={styles.fieldLabel}>开始</Text>
-                <TextInput value={publishStart} onChangeText={setPublishStart} style={styles.input} />
-              </View>
-              <View style={styles.timeField}>
-                <Text style={styles.fieldLabel}>结束</Text>
-                <TextInput value={publishEnd} onChangeText={setPublishEnd} style={styles.input} />
-              </View>
+              <DateTimePickerField label="开始" value={publishStart} onChange={setPublishStart} />
+              <DateTimePickerField label="结束" value={publishEnd} onChange={setPublishEnd} />
             </View>
 
             <View style={styles.previewBox}>
@@ -1365,6 +2165,7 @@ export default function AppRoot() {
               <Text style={styles.publishButtonText}>{isPending ? '发布中...' : '确认发布'}</Text>
             </Pressable>
           </ScrollView>
+          <BackButton label="关闭发布" onPress={() => setPublishOpen(false)} />
         </SafeAreaView>
       </Modal>
 
@@ -1437,14 +2238,9 @@ export default function AppRoot() {
               multiline
               style={[styles.input, styles.textareaSmall]}
             />
-            <View style={styles.row}>
-              <Pressable style={styles.secondaryButton} onPress={handleUseCurrentLocationForEdit}>
-                <Text style={styles.secondaryButtonText}>获取当前位置</Text>
-              </Pressable>
-              <Pressable style={styles.primaryButton} onPress={handleSavePointEdit}>
-                <Text style={styles.primaryButtonText}>{isPending ? '保存中...' : '保存点位'}</Text>
-              </Pressable>
-            </View>
+            <Pressable style={styles.primaryButton} onPress={handleSavePointEdit}>
+              <Text style={styles.primaryButtonText}>{isPending ? '保存中...' : '保存点位'}</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -1460,16 +2256,22 @@ function TabButton({ label, active, onPress }: { label: string; active: boolean;
   );
 }
 
-function BackButton({ label, onPress }: { label: string; onPress: () => void }) {
+function BackButton({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
   return (
-    <View
-      style={styles.backButton}
-      onStartShouldSetResponder={() => true}
-      onMoveShouldSetResponder={() => true}
-      onResponderGrant={onPress}
+    <Pressable
+      accessibilityLabel={label}
+      style={styles.backButtonFloating}
+      onPress={onPress}
+      hitSlop={12}
     >
-      <Text style={styles.backButtonText}>{label}</Text>
-    </View>
+      <Ionicons name="chevron-back" size={22} color="#101828" />
+    </Pressable>
   );
 }
 
@@ -1511,18 +2313,74 @@ function GeneratedRouteCover({ title, cityName }: { title: string; cityName?: st
   );
 }
 
+function mercatorY(latitude: number) {
+  const lat = Math.max(-85, Math.min(85, latitude));
+  return Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+}
+
+type RouteBbox = { minLat: number; maxLat: number; minLng: number; maxLng: number };
+
+function computeBbox(route: NonNullable<Trip['routePreview']>): RouteBbox {
+  const lats = route.map((p) => p.latitude);
+  const lngs = route.map((p) => p.longitude);
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs),
+    maxLng: Math.max(...lngs),
+  };
+}
+
+// Independent X/Y normalization — points fill both axes regardless of real aspect
+function projectBboxFill(latitude: number, longitude: number, bbox: RouteBbox, width: number, height: number) {
+  const padX = width * 0.12;
+  const padY = height * 0.18;
+  const usableW = width - 2 * padX;
+  const usableH = height - 2 * padY;
+  const lngRange = bbox.maxLng - bbox.minLng;
+  const latRange = bbox.maxLat - bbox.minLat;
+  const xRatio = lngRange > 1e-6 ? (longitude - bbox.minLng) / lngRange : 0.5;
+  const yRatio = latRange > 1e-6 ? 1 - (latitude - bbox.minLat) / latRange : 0.5;
+  return { x: padX + xRatio * usableW, y: padY + yRatio * usableH };
+}
+
+function buildStaticMapUrl(route: NonNullable<Trip['routePreview']>) {
+  if (route.length < 2) return null;
+  const bbox = computeBbox(route);
+  const centerLng = (bbox.minLng + bbox.maxLng) / 2;
+  const centerLat = (bbox.minLat + bbox.maxLat) / 2;
+  // Pick zoom that keeps bbox inside a 720x360 web-mercator view; the rendered <Image>
+  // will then be `stretch`'d to whatever container aspect we want.
+  const lngSpan = Math.max(0.0005, bbox.maxLng - bbox.minLng);
+  const mercSpan = Math.max(0.0005, Math.abs(mercatorY(bbox.maxLat) - mercatorY(bbox.minLat)));
+  const zoomLng = Math.log2((720 * 0.85 * 360) / (256 * lngSpan));
+  const zoomLat = Math.log2((360 * 0.85 * 2 * Math.PI) / (256 * mercSpan));
+  const zoom = Math.max(3, Math.min(17, Math.floor(Math.min(zoomLng, zoomLat))));
+  const params = new URLSearchParams({
+    provider: 'stadia',
+    style: 'watercolor',
+    v: '3',
+    width: '720',
+    height: '360',
+    centerLng: centerLng.toFixed(6),
+    centerLat: centerLat.toFixed(6),
+    zoom: String(zoom),
+  });
+  return `${API_BASE_URL}/places/static-map?${params.toString()}`;
+}
+
 function RouteMediaViewer({
   trip,
   route,
   title,
   cityName,
-  compact = false,
+  edgeToEdge = false,
 }: {
   trip?: Trip | null;
   route: NonNullable<Trip['routePreview']>;
   title: string;
   cityName?: string | null;
-  compact?: boolean;
+  edgeToEdge?: boolean;
 }) {
   const imageEntries = collectTripImageEntries(trip);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -1547,44 +2405,156 @@ function RouteMediaViewer({
     }
   }
 
+  const imageFrameStyle = edgeToEdge ? styles.viewerImageFrameFlat : styles.viewerImageFrame;
+  const routeFrameStyle = edgeToEdge ? styles.routeMapEdge : styles.routeMapInset;
+  const staticMapUrl = useMemo(() => buildStaticMapUrl(route), [route]);
+  const bbox = useMemo(() => (route.length >= 2 ? computeBbox(route) : null), [route]);
+  const [staticMapFailed, setStaticMapFailed] = useState(false);
+  const [renderedSize, setRenderedSize] = useState({ width: 360, height: 150 });
+  useEffect(() => {
+    setStaticMapFailed(false);
+  }, [staticMapUrl]);
+
   return (
     <View style={styles.routeMediaViewer}>
-      <RoutePreview
-        points={route}
-        height={compact ? 86 : 110}
-        selectedPointId={activePointId}
-        onPointPress={handlePointPress}
-      />
       {activeImage ? (
-        <View style={[styles.viewerImageFrame, compact ? styles.viewerImageFrameCompact : null]}>
-          <Image source={{ uri: activeImage.uri }} style={styles.viewerImage} />
+        <View style={imageFrameStyle}>
+          <Image source={{ uri: activeImage.uri }} style={styles.viewerImage} resizeMode="cover" />
           {imageEntries.length > 1 ? (
             <>
               <Pressable
                 accessibilityRole="button"
+                hitSlop={12}
                 style={[styles.carouselButton, styles.carouselButtonLeft]}
                 onPress={() => showImage(safeImageIndex - 1)}
               >
-                <Text style={styles.carouselButtonText}>{'<'}</Text>
+                <Ionicons name="chevron-back" size={18} color="#fff" />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
+                hitSlop={12}
                 style={[styles.carouselButton, styles.carouselButtonRight]}
                 onPress={() => showImage(safeImageIndex + 1)}
               >
-                <Text style={styles.carouselButtonText}>{'>'}</Text>
+                <Ionicons name="chevron-forward" size={18} color="#fff" />
               </Pressable>
+              <View style={styles.imageCounterBadge}>
+                <Text style={styles.imageCounterText}>
+                  {safeImageIndex + 1}/{imageEntries.length}
+                </Text>
+              </View>
             </>
           ) : null}
-          <View style={styles.imageCounterBadge}>
-            <Text style={styles.imageCounterText}>
-              {safeImageIndex + 1}/{imageEntries.length} · 点位 {activeImage.pointIndex + 1}
-            </Text>
-          </View>
         </View>
       ) : (
         <GeneratedRouteCover title={title} cityName={cityName} />
       )}
+      {route.length ? (
+        <View style={routeFrameStyle}>
+          {staticMapUrl && !staticMapFailed && bbox ? (
+            <View
+              style={[styles.staticRouteMap, edgeToEdge ? styles.staticRouteMapEdge : null]}
+              onLayout={(e) => {
+                const { width, height } = e.nativeEvent.layout;
+                if (width > 0 && height > 0) {
+                  setRenderedSize({ width, height });
+                }
+              }}
+            >
+              <Image
+                source={{ uri: staticMapUrl }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="stretch"
+                onError={() => setStaticMapFailed(true)}
+              />
+              {(() => {
+                const activeIdx = Math.max(0, route.findIndex((p) => p.pointId === activePointId));
+                return route.map((p, index) => {
+                  if (index === route.length - 1) return null;
+                  const a = projectBboxFill(p.latitude, p.longitude, bbox, renderedSize.width, renderedSize.height);
+                  const next = route[index + 1];
+                  const b = projectBboxFill(next.latitude, next.longitude, bbox, renderedSize.width, renderedSize.height);
+                  const dx = b.x - a.x;
+                  const dy = b.y - a.y;
+                  const length = Math.sqrt(dx * dx + dy * dy);
+                  const traveled = index < activeIdx;
+
+                  if (traveled) {
+                    const angle = Math.atan2(dy, dx);
+                    const transform = [{ rotate: `${angle}rad` }];
+                    const baseLeft = a.x + dx / 2 - length / 2;
+                    const cy = a.y + dy / 2;
+                    return (
+                      <Fragment key={`line-${p.pointId}-${next.pointId}`}>
+                        <View pointerEvents="none" style={[styles.mapOverlayLineHalo, { left: baseLeft, top: cy - 5, width: length, transform }]} />
+                        <View pointerEvents="none" style={[styles.mapOverlayLineTraveled, { left: baseLeft, top: cy - 2.5, width: length, transform }]} />
+                      </Fragment>
+                    );
+                  }
+
+                  const dotSize = 5;
+                  const stride = 18;
+                  const count = Math.max(2, Math.min(20, Math.floor(length / stride)));
+                  const dots = [];
+                  for (let i = 0; i < count; i++) {
+                    const t = (i + 0.5) / count;
+                    const x = a.x + dx * t;
+                    const y = a.y + dy * t;
+                    dots.push(
+                      <View
+                        key={`dot-${p.pointId}-${next.pointId}-${i}`}
+                        pointerEvents="none"
+                        style={[styles.mapOverlayDot, { left: x - dotSize / 2, top: y - dotSize / 2 }]}
+                      />,
+                    );
+                  }
+                  return <Fragment key={`upcoming-${p.pointId}-${next.pointId}`}>{dots}</Fragment>;
+                });
+              })()}
+              {route.map((p, index) => {
+                const { x, y } = projectBboxFill(p.latitude, p.longitude, bbox, renderedSize.width, renderedSize.height);
+                const isStart = index === 0;
+                const isEnd = index === route.length - 1;
+                const isSelected = activePointId === p.pointId;
+                const label = isStart ? 'S' : isEnd ? 'E' : String(index + 1);
+                return (
+                  <Pressable
+                    key={p.pointId}
+                    accessibilityRole="button"
+                    hitSlop={10}
+                    onPress={() => handlePointPress(p.pointId)}
+                    style={[
+                      styles.mapOverlayPoint,
+                      isStart ? styles.mapOverlayPointStart : isEnd ? styles.mapOverlayPointEnd : null,
+                      isSelected ? styles.mapOverlayPointSelected : null,
+                      { left: x - 14, top: y - 14 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.mapOverlayPointLabel,
+                        isStart ? styles.mapOverlayPointLabelLight : null,
+                        isEnd ? styles.mapOverlayPointLabelDark : null,
+                        isSelected ? styles.mapOverlayPointLabelSelected : null,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <RoutePreview
+              points={route}
+              height={edgeToEdge ? 110 : 120}
+              selectedPointId={activePointId}
+              onPointPress={handlePointPress}
+              flat={edgeToEdge}
+            />
+          )}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1594,23 +2564,23 @@ function PostDetailView({
   detail,
   commentText,
   commentsExpanded,
-  onBack,
   onChangeCommentText,
   onToggleComments,
   onToggleLike,
   onToggleSave,
   onCreateComment,
+  onOpenAuthor,
 }: {
   post: FeedItem;
   detail?: PostDetail;
   commentText: string;
   commentsExpanded: boolean;
-  onBack: () => void;
   onChangeCommentText: (value: string) => void;
   onToggleComments: () => void;
   onToggleLike: () => void;
   onToggleSave: () => void;
   onCreateComment: () => void;
+  onOpenAuthor?: (author: UserSummary) => void;
 }) {
   const route = detail?.trip.routePreview ?? post.trip.routePreview ?? [];
   const counts = detail?.counts ?? post._count;
@@ -1621,13 +2591,13 @@ function PostDetailView({
 
   return (
     <View style={styles.detailStack}>
-      <View style={styles.detailTopBar}>
-        <BackButton label="返回首页" onPress={onBack} />
-        <Text style={styles.detailTopTitle}>作品详情</Text>
-      </View>
-
       <View style={styles.postCard}>
-        <View style={styles.authorRow}>
+        <Pressable
+          style={styles.authorRow}
+          onPress={() => onOpenAuthor?.(post.author)}
+          accessibilityRole="button"
+          accessibilityLabel={`查看作者 ${post.author.displayName} 的主页`}
+        >
           <View style={styles.smallAvatar}>
             <Text style={styles.smallAvatarText}>{post.author.displayName.slice(0, 1).toUpperCase()}</Text>
           </View>
@@ -1635,7 +2605,8 @@ function PostDetailView({
             <Text style={styles.authorName}>{post.author.displayName}</Text>
             <Text style={styles.hintText}>{formatDate(post.publishedAt)}</Text>
           </View>
-        </View>
+          <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+        </Pressable>
         <Text style={styles.postTitle}>{detail?.title ?? post.title}</Text>
         {detail?.summary || post.summary ? (
           <Text style={styles.postSummary}>{detail?.summary ?? post.summary}</Text>
@@ -1646,15 +2617,29 @@ function PostDetailView({
           title={detail?.title ?? post.title}
           cityName={detail?.cityName ?? post.cityName}
         />
-        <View style={styles.actionGrid}>
-          <Pressable style={[styles.actionButton, liked ? styles.actionButtonActive : null]} onPress={onToggleLike}>
-            <Text style={[styles.actionButtonText, liked ? styles.actionButtonTextActive : null]}>
-              {liked ? '已赞' : '点赞'} · {counts.likes}
+        <View style={styles.iconActionRow}>
+          <Pressable style={styles.iconAction} onPress={onToggleLike} hitSlop={8}>
+            <Ionicons
+              name={liked ? 'heart' : 'heart-outline'}
+              size={24}
+              color={liked ? PRIMARY : '#475467'}
+            />
+            <Text style={[styles.iconActionCount, liked ? styles.iconActionCountActive : null]}>
+              {counts.likes}
             </Text>
           </Pressable>
-          <Pressable style={[styles.actionButton, saved ? styles.actionButtonActive : null]} onPress={onToggleSave}>
-            <Text style={[styles.actionButtonText, saved ? styles.actionButtonTextActive : null]}>
-              {saved ? '已收藏' : '收藏'} · {counts.saves}
+          <Pressable style={styles.iconAction} hitSlop={8} onPress={onToggleComments}>
+            <Ionicons name="chatbubble-ellipses-outline" size={24} color="#475467" />
+            <Text style={styles.iconActionCount}>{counts.comments}</Text>
+          </Pressable>
+          <Pressable style={styles.iconAction} onPress={onToggleSave} hitSlop={8}>
+            <Ionicons
+              name={saved ? 'bookmark' : 'bookmark-outline'}
+              size={24}
+              color={saved ? PRIMARY : '#475467'}
+            />
+            <Text style={[styles.iconActionCount, saved ? styles.iconActionCountActive : null]}>
+              {counts.saves}
             </Text>
           </Pressable>
         </View>
@@ -1711,83 +2696,243 @@ function PostDetailView({
   );
 }
 
+function FeedTopBar() {
+  return (
+    <View style={styles.feedTopBar}>
+      <View style={styles.feedTopBarBrandRow}>
+        <Text style={styles.feedTopBarBrand}>tripin</Text>
+        <View style={styles.feedTopBarBrandDot} />
+      </View>
+    </View>
+  );
+}
+
+function formatRelativeTime(value?: string | null) {
+  if (!value) return '';
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffMin = Math.max(1, Math.round((Date.now() - then) / 60000));
+  if (diffMin < 60) return `${diffMin} 分钟前`;
+  const diffHour = Math.round(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} 小时前`;
+  const diffDay = Math.round(diffHour / 24);
+  if (diffDay < 7) return `${diffDay} 天前`;
+  const diffWeek = Math.round(diffDay / 7);
+  if (diffWeek < 5) return `${diffWeek} 周前`;
+  return new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+}
+
 function PostCard({
   post,
   detail,
   expanded = false,
   commentText = '',
+  isFirst = false,
   onOpen,
   onToggleLike,
   onToggleSave,
   onChangeCommentText,
   onCreateComment,
+  onOpenAuthor,
 }: {
   post: FeedItem;
   detail?: PostDetail;
   expanded?: boolean;
   commentText?: string;
+  isFirst?: boolean;
   onOpen?: () => void;
   onToggleLike?: () => void;
   onToggleSave?: () => void;
   onChangeCommentText?: (value: string) => void;
   onCreateComment?: () => void;
+  onOpenAuthor?: (author: UserSummary) => void;
 }) {
   const points = detail?.trip.routePreview ?? post.trip.routePreview ?? [];
   const counts = detail?.counts ?? post._count;
   const liked = detail?.viewerState?.liked ?? post.viewerState?.liked ?? false;
   const saved = detail?.viewerState?.saved ?? post.viewerState?.saved ?? false;
+  const initials = post.author.displayName.slice(0, 1).toUpperCase();
+  const cityLabel = post.cityName?.trim() || '未知城市';
+  const timeLabel = formatRelativeTime(post.publishedAt);
+
   return (
-    <View style={styles.postCard}>
-      <Pressable style={styles.cardOpenArea} onPress={onOpen}>
-        <View style={styles.authorRow}>
-          <View style={styles.smallAvatar}>
-            <Text style={styles.smallAvatarText}>{post.author.displayName.slice(0, 1).toUpperCase()}</Text>
-          </View>
-          <View style={styles.authorCopy}>
-            <Text style={styles.authorName}>{post.author.displayName}</Text>
-            <Text style={styles.hintText}>{formatDate(post.publishedAt)}</Text>
+    <View style={[styles.post, isFirst && styles.postFirst]}>
+      <Pressable
+        style={styles.postHeader}
+        onPress={() => onOpenAuthor?.(post.author)}
+        accessibilityRole="button"
+        accessibilityLabel={`查看作者 ${post.author.displayName} 的主页`}
+      >
+        <View style={styles.postAuthorRing}>
+          <View style={styles.postAuthor}>
+            <Text style={styles.postAuthorInitials}>{initials}</Text>
           </View>
         </View>
-        <Text style={styles.postTitle}>{post.title}</Text>
-        {post.summary ? <Text style={styles.postSummary}>{post.summary}</Text> : null}
+        <View style={styles.postHeaderCopy}>
+          <Text style={styles.postAuthorName} numberOfLines={1}>
+            {post.author.displayName}
+          </Text>
+          <Text style={styles.postAuthorMeta} numberOfLines={1}>
+            {cityLabel}
+            {timeLabel ? ` · ${timeLabel}` : ''}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
       </Pressable>
-      <RouteMediaViewer
-        trip={detail?.trip}
-        route={points}
-        title={post.title}
-        cityName={post.cityName}
-        compact={!expanded}
-      />
-      <View style={styles.metaRow}>
-        <Text style={styles.metaPill}>{post.pointCount} 点位</Text>
-        <Text style={styles.metaPill}>{counts.comments} 评论</Text>
-      </View>
-      <View style={styles.actionGrid}>
-        <Pressable style={[styles.actionButton, liked ? styles.actionButtonActive : null]} onPress={onToggleLike}>
-          <Text style={[styles.actionButtonText, liked ? styles.actionButtonTextActive : null]}>
-            {liked ? '已赞' : '点赞'} · {counts.likes}
-          </Text>
+
+      <Pressable onPress={onOpen} style={styles.postHero}>
+        <RouteMediaViewer
+          trip={detail?.trip}
+          route={points}
+          title={post.title}
+          cityName={post.cityName}
+          edgeToEdge
+        />
+      </Pressable>
+
+      <View style={styles.postActions}>
+        <View style={styles.postActionsLeft}>
+          <Pressable onPress={onToggleLike} hitSlop={8} style={styles.postActionBtn}>
+            <Ionicons
+              name={liked ? 'heart' : 'heart-outline'}
+              size={26}
+              color={liked ? TINT : INK}
+            />
+          </Pressable>
+          <Pressable onPress={onOpen} hitSlop={8} style={styles.postActionBtn}>
+            <Ionicons name="chatbubble-outline" size={24} color={INK} />
+          </Pressable>
+        </View>
+        <Pressable onPress={onToggleSave} hitSlop={8} style={styles.postActionBtn}>
+          <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={24} color={INK} />
         </Pressable>
-        <Pressable style={[styles.actionButton, saved ? styles.actionButtonActive : null]} onPress={onToggleSave}>
-          <Text style={[styles.actionButtonText, saved ? styles.actionButtonTextActive : null]}>
-            {saved ? '已收藏' : '收藏'} · {counts.saves}
-          </Text>
-        </Pressable>
       </View>
-      <View style={styles.commentComposer}>
+
+      {counts.likes > 0 ? (
+        <Text style={styles.postLikeCount}>
+          {counts.likes.toLocaleString('zh-CN')} 个赞
+        </Text>
+      ) : null}
+
+      <View style={styles.postCaption}>
+        <Pressable onPress={onOpen}>
+          <Text style={styles.postCaptionTitle}>{post.title}</Text>
+        </Pressable>
+        {post.summary ? (
+          <Text style={styles.postCaptionBody} numberOfLines={2}>
+            <Text style={styles.postCaptionAuthorInline}>{post.author.displayName}  </Text>
+            {post.summary}
+          </Text>
+        ) : null}
+      </View>
+
+      {counts.comments > 0 ? (
+        <Pressable onPress={onOpen} hitSlop={6}>
+          <Text style={styles.postViewComments}>查看全部 {counts.comments} 条评论</Text>
+        </Pressable>
+      ) : null}
+
+      <View style={styles.postComposer}>
         <TextInput
           value={commentText}
           onChangeText={onChangeCommentText}
-          placeholder="直接评论这条路线"
-          style={[styles.input, styles.commentInput]}
+          placeholder="留下一句评论…"
+          placeholderTextColor={MUTED}
+          style={styles.postComposerInput}
         />
-        <Pressable style={styles.commentSendButton} onPress={onCreateComment}>
-          <Text style={styles.commentSendText}>发送</Text>
-        </Pressable>
+        {commentText.trim() ? (
+          <Pressable onPress={onCreateComment} hitSlop={6}>
+            <Text style={styles.postComposerSend}>发布</Text>
+          </Pressable>
+        ) : null}
       </View>
-      <Pressable style={styles.expandButton} onPress={onOpen}>
-        <Text style={styles.expandButtonText}>查看详情与全部评论</Text>
-      </Pressable>
+    </View>
+  );
+}
+
+function StudioEntryCard({
+  title,
+  description,
+  meta,
+  actionLabel,
+  disabled = false,
+  onPress,
+}: {
+  title: string;
+  description: string;
+  meta?: string;
+  actionLabel: string;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.studioEntryCard, disabled ? styles.studioEntryCardDisabled : null]}
+      onPress={onPress}
+      accessibilityRole="button"
+    >
+      <View style={styles.studioEntryHeader}>
+        <Text style={styles.studioEntryTitle}>{title}</Text>
+        <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
+      </View>
+      <Text style={styles.studioEntryDescription}>{description}</Text>
+      {meta ? <Text style={styles.studioEntryMeta}>{meta}</Text> : null}
+      <View style={[styles.studioEntryAction, disabled ? styles.studioEntryActionDisabled : null]}>
+        <Text style={styles.studioEntryActionText}>{actionLabel}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function AuthorProfileView({
+  state,
+  onOpenPost,
+}: {
+  state: AuthorProfileState;
+  onOpenPost: (post: FeedItem) => void;
+}) {
+  const { user, posts, loading } = state;
+  const totalLikes = posts.reduce((sum, post) => sum + (post._count?.likes ?? 0), 0);
+  const cityCount = new Set(posts.map((post) => post.cityName).filter(Boolean)).size;
+
+  return (
+    <View style={styles.detailStack}>
+      <View style={styles.profileBlock}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{user.displayName.slice(0, 1).toUpperCase() || '人'}</Text>
+        </View>
+        <View>
+          <Text style={styles.profileName}>{user.displayName}</Text>
+          <Text style={styles.pageSubtitle}>{user.username ? `@${user.username}` : user.id}</Text>
+        </View>
+      </View>
+      {user.bio ? <Text style={styles.postSummary}>{user.bio}</Text> : null}
+      <View style={styles.statsRow}>
+        <Stat value={String(posts.length)} label="作品" />
+        <Stat value={String(totalLikes)} label="累计点赞" />
+        <Stat value={String(cityCount)} label="去过城市" />
+      </View>
+      <View style={styles.panel}>
+        <View style={styles.panelHeader}>
+          <Text style={styles.panelTitle}>作品列表</Text>
+          <Text style={styles.hintText}>{loading ? '加载中…' : `${posts.length} 条`}</Text>
+        </View>
+        {loading ? (
+          <EmptyMessage title="加载中" description="正在获取该作者的发布作品。" />
+        ) : posts.length ? (
+          posts.map((item) => (
+            <Pressable key={item.id} style={styles.compactPostRow} onPress={() => onOpenPost(item)}>
+              <Text style={styles.tripTitle}>{item.title}</Text>
+              <Text style={styles.hintText}>
+                {item.cityName ? `${item.cityName} · ` : ''}
+                {item.pointCount} 点位 · {item._count.likes} 赞 · {item._count.comments} 评论
+              </Text>
+            </Pressable>
+          ))
+        ) : (
+          <EmptyMessage title="暂无公开作品" description="该作者还没有发布过路线。" />
+        )}
+      </View>
     </View>
   );
 }
@@ -1801,18 +2946,19 @@ function AccountRow({
 }: {
   title: string;
   meta?: string;
-  icon: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
   danger?: boolean;
   onPress: () => void;
 }) {
+  const iconColor = danger ? '#dc2626' : PRIMARY;
   return (
     <Pressable style={styles.accountRow} onPress={onPress}>
       <View style={[styles.accountIcon, danger ? styles.accountIconDanger : null]}>
-        <Text style={[styles.accountIconText, danger ? styles.accountIconTextDanger : null]}>{icon}</Text>
+        <Ionicons name={icon} size={18} color={iconColor} />
       </View>
       <Text style={[styles.accountRowTitle, danger ? styles.accountRowDangerText : null]}>{title}</Text>
       {meta ? <Text style={styles.accountRowMeta}>{meta}</Text> : null}
-      <Text style={styles.accountArrow}>›</Text>
+      <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
     </Pressable>
   );
 }
@@ -2048,7 +3194,6 @@ function PointRow({
         </View>
         <Text style={styles.hintText}>{formatDate(point.startedAt)}</Text>
         {point.note ? <Text style={styles.pointNote}>{point.note}</Text> : null}
-        {!hasUsableCoordinate(point) ? <Text style={styles.warningText}>缺少位置，暂不能形成路线</Text> : null}
       </View>
       {firstImage ? <Image source={{ uri: firstImage }} style={styles.pointImage} /> : null}
       {editable ? (
@@ -2095,10 +3240,66 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
   },
+  flex1: {
+    flex: 1,
+  },
+  tabPaneActive: {
+    flex: 1,
+  },
+  tabPaneHidden: {
+    flex: 1,
+    display: 'none',
+  },
   screenContent: {
     padding: 18,
     paddingBottom: 118,
     gap: 16,
+  },
+  authScreen: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 36,
+  },
+  authHero: {
+    gap: 8,
+    paddingVertical: 10,
+  },
+  authKicker: {
+    color: '#1F4FE0',
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  authTitle: {
+    color: '#101828',
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '900',
+  },
+  authModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 4,
+    borderRadius: 999,
+    backgroundColor: '#f2f4f7',
+  },
+  authModeButton: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+  },
+  authModeButtonActive: {
+    backgroundColor: '#111827',
+  },
+  authModeText: {
+    color: '#667085',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  authModeTextActive: {
+    color: '#fff',
   },
   centerState: {
     flex: 1,
@@ -2246,6 +3447,54 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
+  placeSearchRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  placeSearchInput: {
+    flex: 1,
+  },
+  placeSearchButton: {
+    minHeight: 46,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: '#111827',
+  },
+  placeSearchButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  placeSearchList: {
+    gap: 6,
+    maxHeight: 220,
+    padding: 8,
+    borderRadius: 14,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e6e9ee',
+  },
+  placeSearchItem: {
+    gap: 4,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#eef1f5',
+  },
+  placeSearchItemTitle: {
+    color: '#101828',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  placeSearchItemMeta: {
+    color: '#667085',
+    fontSize: 12,
+    lineHeight: 16,
+  },
   selectedLocationText: {
     padding: 10,
     borderRadius: 12,
@@ -2296,12 +3545,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#111827',
+    backgroundColor: PRIMARY,
   },
   primaryButtonText: {
     color: '#fff',
     fontSize: 15,
     fontWeight: '800',
+  },
+  primaryButtonWide: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: PRIMARY,
   },
   secondaryButton: {
     flex: 1,
@@ -2316,12 +3572,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
   },
+  secondaryButtonWide: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#eef1f5',
+  },
   publishButton: {
     minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 16,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#1F4FE0',
   },
   publishButtonText: {
     color: '#fff',
@@ -2376,7 +3639,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   routeMediaViewer: {
-    gap: 10,
+    gap: 0,
   },
   viewerImageFrame: {
     height: 330,
@@ -2387,8 +3650,107 @@ const styles = StyleSheet.create({
     borderColor: '#e4e7ec',
     position: 'relative',
   },
-  viewerImageFrameCompact: {
-    height: 270,
+  viewerImageFrameFlat: {
+    width: '100%',
+    aspectRatio: 1,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    position: 'relative',
+  },
+  routeMapInset: {
+    marginTop: 10,
+    overflow: 'hidden',
+    borderRadius: 18,
+  },
+  routeMapEdge: {
+    width: '100%',
+    marginTop: 8,
+    paddingHorizontal: 0,
+    backgroundColor: PAPER,
+    borderTopWidth: 1,
+    borderTopColor: HAIRLINE,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: HAIRLINE,
+  },
+  staticRouteMap: {
+    width: '100%',
+    height: 150,
+    backgroundColor: '#eef3f7',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  staticRouteMapEdge: {
+    height: 140,
+  },
+  mapOverlayLineHalo: {
+    position: 'absolute',
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    elevation: 1,
+  },
+  mapOverlayLineTraveled: {
+    position: 'absolute',
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: TINT,
+    elevation: 2,
+    shadowColor: TINT,
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  mapOverlayDot: {
+    position: 'absolute',
+    width: 5,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: TINT,
+    opacity: 0.85,
+  },
+  mapOverlayPoint: {
+    position: 'absolute',
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fffaf1',
+    borderWidth: 2.5,
+    borderColor: '#11443f',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  mapOverlayPointStart: {
+    backgroundColor: '#173f39',
+  },
+  mapOverlayPointEnd: {
+    backgroundColor: '#d9b67d',
+    borderColor: '#8d5f1f',
+  },
+  mapOverlayPointSelected: {
+    width: 34,
+    height: 34,
+    backgroundColor: '#2563eb',
+    borderColor: '#1d4ed8',
+    borderWidth: 3,
+  },
+  mapOverlayPointLabel: {
+    color: '#173430',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  mapOverlayPointLabelLight: {
+    color: '#fff9f0',
+  },
+  mapOverlayPointLabelDark: {
+    color: '#5a3a12',
+  },
+  mapOverlayPointLabelSelected: {
+    color: '#fff',
   },
   viewerImage: {
     width: '100%',
@@ -2396,19 +3758,19 @@ const styles = StyleSheet.create({
   },
   carouselButton: {
     position: 'absolute',
-    top: '42%',
-    width: 42,
-    height: 42,
+    top: '46%',
+    width: 32,
+    height: 32,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
   },
   carouselButtonLeft: {
-    left: 10,
+    left: 8,
   },
   carouselButtonRight: {
-    right: 10,
+    right: 8,
   },
   carouselButtonText: {
     color: '#fff',
@@ -2418,17 +3780,17 @@ const styles = StyleSheet.create({
   },
   imageCounterBadge: {
     position: 'absolute',
-    right: 12,
-    bottom: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    right: 10,
+    top: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 999,
-    backgroundColor: 'rgba(15, 23, 42, 0.76)',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
   },
   imageCounterText: {
     color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '700',
   },
   photoStrip: {
     gap: 10,
@@ -2555,6 +3917,34 @@ const styles = StyleSheet.create({
   actionButtonTextActive: {
     color: '#fff',
   },
+  iconActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+    paddingVertical: 4,
+  },
+  iconAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  iconActionCount: {
+    color: '#475467',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  iconActionCountActive: {
+    color: PRIMARY,
+  },
+  iconActionSpacer: {
+    flex: 1,
+  },
+  iconActionMeta: {
+    color: '#98a2b3',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   commentComposer: {
     flexDirection: 'row',
     gap: 8,
@@ -2569,7 +3959,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#111827',
+    backgroundColor: PRIMARY,
   },
   commentSendText: {
     color: '#fff',
@@ -2617,7 +4007,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   expandButtonText: {
-    color: '#2563eb',
+    color: '#1F4FE0',
     fontSize: 14,
     fontWeight: '900',
   },
@@ -2736,17 +4126,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   textButtonLabel: {
-    color: '#2563eb',
+    color: '#1F4FE0',
     fontSize: 15,
     fontWeight: '800',
   },
   backButton: {
     alignSelf: 'flex-start',
-    minWidth: 116,
-    minHeight: 48,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
     borderRadius: 999,
     backgroundColor: '#fff',
     borderWidth: 1,
@@ -2755,9 +4144,34 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   backButtonText: {
-    color: '#2563eb',
+    color: '#1F4FE0',
     fontSize: 16,
     fontWeight: '900',
+  },
+  backButtonFloating: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? 44 : 14,
+    left: 14,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dbe3ef',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    zIndex: 50,
+  },
+  screenContentWithFloating: {
+    paddingTop: Platform.OS === 'android' ? 100 : 70,
+  },
+  publishPageWithFloating: {
+    paddingTop: Platform.OS === 'android' ? 100 : 70,
   },
   profileBlock: {
     flexDirection: 'row',
@@ -2955,7 +4369,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: PRIMARY,
   },
   plusText: {
     color: '#fff',
@@ -2964,7 +4378,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   homeButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#1F4FE0',
   },
   homeButtonText: {
     fontSize: 14,
@@ -3053,7 +4467,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   closeText: {
-    color: '#2563eb',
+    color: '#1F4FE0',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -3069,6 +4483,292 @@ const styles = StyleSheet.create({
   uploadTitle: {
     color: '#101828',
     fontSize: 16,
+    fontWeight: '900',
+  },
+
+  // ───────── Instagram-style feed redesign ─────────
+  feedRoot: {
+    flex: 1,
+    backgroundColor: PAPER,
+  },
+  feedScroll: {
+    flex: 1,
+  },
+  feedScrollContent: {
+    paddingBottom: 130,
+  },
+  feedTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    backgroundColor: PAPER,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: HAIRLINE,
+  },
+  feedTopBarBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  feedTopBarBrand: {
+    fontFamily: FONT_DISPLAY,
+    color: INK,
+    fontSize: 30,
+    letterSpacing: -1.4,
+    lineHeight: 32,
+    includeFontPadding: false,
+  },
+  feedTopBarBrandDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+    backgroundColor: TINT,
+    marginBottom: 6,
+  },
+  feedTopBarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+  },
+  feedTopBarIconBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  feedEmpty: {
+    paddingHorizontal: 24,
+    paddingTop: 64,
+    gap: 10,
+    alignItems: 'flex-start',
+  },
+  feedEmptyTitle: {
+    fontFamily: FONT_DISPLAY,
+    fontSize: 28,
+    color: INK,
+    letterSpacing: -0.6,
+  },
+  feedEmptyBody: {
+    fontFamily: FONT_BODY,
+    color: MUTED,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
+  post: {
+    paddingTop: 12,
+    paddingBottom: 14,
+    backgroundColor: PAPER,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: HAIRLINE,
+  },
+  postFirst: {
+    paddingTop: 4,
+  },
+  postHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    gap: 12,
+  },
+  postAuthorRing: {
+    padding: 2,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: TINT,
+  },
+  postAuthor: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: INK,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postAuthorInitials: {
+    fontFamily: FONT_BODY_BOLD,
+    color: PAPER,
+    fontSize: 14,
+    includeFontPadding: false,
+  },
+  postHeaderCopy: {
+    flex: 1,
+    gap: 1,
+  },
+  postAuthorName: {
+    fontFamily: FONT_BODY_BOLD,
+    color: INK,
+    fontSize: 14,
+    includeFontPadding: false,
+  },
+  postAuthorMeta: {
+    fontFamily: FONT_BODY,
+    color: MUTED,
+    fontSize: 12,
+    includeFontPadding: false,
+  },
+  postHeaderMore: {
+    paddingHorizontal: 4,
+  },
+  postHero: {
+    width: '100%',
+    backgroundColor: PAPER,
+  },
+  postActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  postActionsLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  postActionBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postLikeCount: {
+    fontFamily: FONT_BODY_BOLD,
+    color: INK,
+    fontSize: 14,
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    includeFontPadding: false,
+  },
+  postCaption: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    gap: 4,
+  },
+  postCaptionTitle: {
+    fontFamily: FONT_DISPLAY,
+    color: INK,
+    fontSize: 22,
+    letterSpacing: -0.6,
+    lineHeight: 26,
+    includeFontPadding: false,
+  },
+  postCaptionAuthorInline: {
+    fontFamily: FONT_BODY_BOLD,
+    color: INK,
+  },
+  postCaptionMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  postCaptionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: TINT_SOFT,
+  },
+  postCaptionChipText: {
+    fontFamily: FONT_BODY_BOLD,
+    color: TINT,
+    fontSize: 11,
+    letterSpacing: 0.2,
+    includeFontPadding: false,
+  },
+  postCaptionMetaText: {
+    fontFamily: FONT_BODY,
+    color: MUTED,
+    fontSize: 12,
+  },
+  postCaptionBody: {
+    fontFamily: FONT_BODY,
+    color: INK_SOFT,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  postViewComments: {
+    fontFamily: FONT_BODY,
+    color: MUTED,
+    fontSize: 13,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+  },
+  postComposer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  postComposerInput: {
+    flex: 1,
+    minHeight: 36,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    fontFamily: FONT_BODY,
+    color: INK,
+    fontSize: 14,
+  },
+  postComposerSend: {
+    fontFamily: FONT_BODY_BOLD,
+    color: TINT,
+    fontSize: 14,
+  },
+  studioEntryCard: {
+    gap: 8,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e6e9ee',
+  },
+  studioEntryCardDisabled: {
+    opacity: 0.55,
+  },
+  studioEntryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  studioEntryTitle: {
+    color: '#101828',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  studioEntryDescription: {
+    color: '#475467',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  studioEntryMeta: {
+    color: '#98a2b3',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  studioEntryAction: {
+    alignSelf: 'flex-start',
+    minHeight: 38,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    backgroundColor: '#111827',
+  },
+  studioEntryActionDisabled: {
+    backgroundColor: '#cbd5e1',
+  },
+  studioEntryActionText: {
+    color: '#fff',
+    fontSize: 13,
     fontWeight: '900',
   },
 });

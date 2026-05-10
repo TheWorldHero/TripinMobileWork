@@ -19,11 +19,13 @@ public class AuthService {
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
+  private final JwtService jwtService;
 
-  public AuthService(DbSupport db, JsonSupport json, UserService userService) {
+  public AuthService(DbSupport db, JsonSupport json, UserService userService, JwtService jwtService) {
     this.db = db;
     this.json = json;
     this.userService = userService;
+    this.jwtService = jwtService;
   }
 
   public Map<String, Object> register(RegisterRequest request) {
@@ -125,11 +127,32 @@ public class AuthService {
     return buildAuthResponse(user);
   }
 
+  public Map<String, Object> refresh(String refreshToken) {
+    if (refreshToken == null || refreshToken.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "refreshToken is required");
+    }
+    String userId;
+    try {
+      userId = jwtService.verifyRefreshOrThrow(refreshToken).userId();
+    } catch (io.jsonwebtoken.JwtException exception) {
+      throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid refresh token");
+    }
+    // Rotate: revoke old refresh, issue new pair
+    try {
+      jwtService.revoke(jwtService.verifyRefreshOrThrow(refreshToken));
+    } catch (io.jsonwebtoken.JwtException ignored) {
+      // already invalid — proceed with new pair issuance is harmless
+    }
+    return buildAuthResponse(userService.findRequired(userId));
+  }
+
   private Map<String, Object> buildAuthResponse(Map<String, Object> user) {
     Map<String, Object> response = new LinkedHashMap<>();
     response.put("user", user);
     response.put("sessionUserId", user.get("id"));
     response.put("issuedAt", Instant.now());
+    JwtService.TokenPair pair = jwtService.issuePair((String) user.get("id"));
+    response.putAll(jwtService.toResponseFields(pair));
     return response;
   }
 

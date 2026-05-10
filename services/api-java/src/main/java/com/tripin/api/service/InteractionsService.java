@@ -1,5 +1,6 @@
 package com.tripin.api.service;
 
+import com.tripin.api.cache.PostCacheService;
 import com.tripin.api.support.DbSupport;
 import com.tripin.api.support.JsonSupport;
 import com.tripin.api.web.Requests.CreateCommentRequest;
@@ -15,11 +16,14 @@ public class InteractionsService {
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
+  private final PostCacheService postCache;
 
-  public InteractionsService(DbSupport db, JsonSupport json, UserService userService) {
+  public InteractionsService(
+      DbSupport db, JsonSupport json, UserService userService, PostCacheService postCache) {
     this.db = db;
     this.json = json;
     this.userService = userService;
+    this.postCache = postCache;
   }
 
   public Map<String, Object> likePost(String userId, String postId) {
@@ -32,6 +36,7 @@ public class InteractionsService {
         """,
         Map.of("id", json.newId("like"), "postId", postId, "userId", userId));
     logEvent(userId, postId, "post_liked", null);
+    postCache.invalidate(postId);
     return getPostInteractionState(postId, userId);
   }
 
@@ -40,6 +45,7 @@ public class InteractionsService {
     db.update(
         "delete from \"PostLike\" where \"postId\" = :postId and \"userId\" = :userId",
         Map.of("postId", postId, "userId", userId));
+    postCache.invalidate(postId);
     return getPostInteractionState(postId, userId);
   }
 
@@ -53,6 +59,7 @@ public class InteractionsService {
         """,
         Map.of("id", json.newId("save"), "postId", postId, "userId", userId));
     logEvent(userId, postId, "post_saved", null);
+    postCache.invalidate(postId);
     return getPostInteractionState(postId, userId);
   }
 
@@ -61,6 +68,7 @@ public class InteractionsService {
     db.update(
         "delete from \"PostSave\" where \"postId\" = :postId and \"userId\" = :userId",
         Map.of("postId", postId, "userId", userId));
+    postCache.invalidate(postId);
     return getPostInteractionState(postId, userId);
   }
 
@@ -77,6 +85,7 @@ public class InteractionsService {
         values (:id, :postId, :userId, :content)
         """,
         Map.of("id", commentId, "postId", postId, "userId", userId, "content", request.content()));
+    postCache.invalidate(postId);
 
     Map<String, Object> user = userService.findRequired(userId);
     Map<String, Object> comment =

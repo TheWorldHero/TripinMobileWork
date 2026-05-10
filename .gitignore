@@ -21,6 +21,8 @@ coverage/
 *.log
 emulator-screen.png
 tripin-*.png
+builds/
+*.stackdump
 apps/web/public/uploads/*
 !apps/web/public/uploads/.gitkeep
 .claude/

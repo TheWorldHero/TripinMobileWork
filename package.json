@@ -9,10 +9,6 @@
   "scripts": {
     "dev:api": "services\\api-java\\start-local.cmd",
     "dev:web": "npm --workspace apps/web run dev",
-    "dev:mobile": "npm --workspace apps/mobile run start",
-    "start:mobile": "npm --workspace apps/mobile run start",
-    "start:mobile:android": "npm --workspace apps/mobile run start:android",
-    "start:all": "powershell -ExecutionPolicy Bypass -File .\\start-tripin.ps1",
     "start:api": "services\\api-java\\start-local.cmd",
     "serve:mobile": "python -m http.server 8081 --directory apps/mobile/dist",
     "build:api": "mvn -f services/api-java/pom.xml -Dmaven.repo.local=.m2repo compile",

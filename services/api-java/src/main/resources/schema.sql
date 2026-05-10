@@ -1,6 +1,10 @@
 CREATE EXTENSION IF NOT EXISTS postgis;
 
-DO $$
+-- Enum types are created via a PL/pgSQL block because Postgres has no
+-- CREATE TYPE IF NOT EXISTS. Tagged dollar-quoting ($body$) is used so the
+-- block survives Spring's SQL splitter, which only mishandles the unnamed
+-- $$ tag.
+DO $body$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'UserStatus') THEN
     CREATE TYPE "UserStatus" AS ENUM ('ACTIVE', 'SUSPENDED');
@@ -26,7 +30,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'PostStatus') THEN
     CREATE TYPE "PostStatus" AS ENUM ('ACTIVE', 'HIDDEN', 'ARCHIVED');
   END IF;
-END $$;
+END $body$;
 
 CREATE TABLE IF NOT EXISTS "User" (
   "id" TEXT PRIMARY KEY,
@@ -229,121 +233,120 @@ CREATE TABLE IF NOT EXISTS "UserActionEvent" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Trip_ownerId_fkey') THEN
-    ALTER TABLE "Trip" ADD CONSTRAINT "Trip_ownerId_fkey"
-      FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Trip_coverMediaId_fkey') THEN
-    ALTER TABLE "Trip" ADD CONSTRAINT "Trip_coverMediaId_fkey"
-      FOREIGN KEY ("coverMediaId") REFERENCES "MediaAsset"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TripPoint_tripId_fkey') THEN
-    ALTER TABLE "TripPoint" ADD CONSTRAINT "TripPoint_tripId_fkey"
-      FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TripPoint_placeId_fkey') THEN
-    ALTER TABLE "TripPoint" ADD CONSTRAINT "TripPoint_placeId_fkey"
-      FOREIGN KEY ("placeId") REFERENCES "Place"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Point_ownerId_fkey') THEN
-    ALTER TABLE "Point" ADD CONSTRAINT "Point_ownerId_fkey"
-      FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Point_placeId_fkey') THEN
-    ALTER TABLE "Point" ADD CONSTRAINT "Point_placeId_fkey"
-      FOREIGN KEY ("placeId") REFERENCES "Place"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'LinePoint_lineId_fkey') THEN
-    ALTER TABLE "LinePoint" ADD CONSTRAINT "LinePoint_lineId_fkey"
-      FOREIGN KEY ("lineId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'LinePoint_pointId_fkey') THEN
-    ALTER TABLE "LinePoint" ADD CONSTRAINT "LinePoint_pointId_fkey"
-      FOREIGN KEY ("pointId") REFERENCES "Point"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RouteSegment_lineId_fkey') THEN
-    ALTER TABLE "RouteSegment" ADD CONSTRAINT "RouteSegment_lineId_fkey"
-      FOREIGN KEY ("lineId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RouteSegment_fromPointId_fkey') THEN
-    ALTER TABLE "RouteSegment" ADD CONSTRAINT "RouteSegment_fromPointId_fkey"
-      FOREIGN KEY ("fromPointId") REFERENCES "Point"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RouteSegment_toPointId_fkey') THEN
-    ALTER TABLE "RouteSegment" ADD CONSTRAINT "RouteSegment_toPointId_fkey"
-      FOREIGN KEY ("toPointId") REFERENCES "Point"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MediaAsset_ownerId_fkey') THEN
-    ALTER TABLE "MediaAsset" ADD CONSTRAINT "MediaAsset_ownerId_fkey"
-      FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MediaAsset_tripId_fkey') THEN
-    ALTER TABLE "MediaAsset" ADD CONSTRAINT "MediaAsset_tripId_fkey"
-      FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MediaAsset_tripPointId_fkey') THEN
-    ALTER TABLE "MediaAsset" ADD CONSTRAINT "MediaAsset_tripPointId_fkey"
-      FOREIGN KEY ("tripPointId") REFERENCES "TripPoint"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Post_tripId_fkey') THEN
-    ALTER TABLE "Post" ADD CONSTRAINT "Post_tripId_fkey"
-      FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Post_authorId_fkey') THEN
-    ALTER TABLE "Post" ADD CONSTRAINT "Post_authorId_fkey"
-      FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Post_coverMediaId_fkey') THEN
-    ALTER TABLE "Post" ADD CONSTRAINT "Post_coverMediaId_fkey"
-      FOREIGN KEY ("coverMediaId") REFERENCES "MediaAsset"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PostLike_postId_fkey') THEN
-    ALTER TABLE "PostLike" ADD CONSTRAINT "PostLike_postId_fkey"
-      FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PostLike_userId_fkey') THEN
-    ALTER TABLE "PostLike" ADD CONSTRAINT "PostLike_userId_fkey"
-      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PostSave_postId_fkey') THEN
-    ALTER TABLE "PostSave" ADD CONSTRAINT "PostSave_postId_fkey"
-      FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PostSave_userId_fkey') THEN
-    ALTER TABLE "PostSave" ADD CONSTRAINT "PostSave_userId_fkey"
-      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Comment_postId_fkey') THEN
-    ALTER TABLE "Comment" ADD CONSTRAINT "Comment_postId_fkey"
-      FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Comment_userId_fkey') THEN
-    ALTER TABLE "Comment" ADD CONSTRAINT "Comment_userId_fkey"
-      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FeedImpression_userId_fkey') THEN
-    ALTER TABLE "FeedImpression" ADD CONSTRAINT "FeedImpression_userId_fkey"
-      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FeedImpression_postId_fkey') THEN
-    ALTER TABLE "FeedImpression" ADD CONSTRAINT "FeedImpression_postId_fkey"
-      FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'UserActionEvent_userId_fkey') THEN
-    ALTER TABLE "UserActionEvent" ADD CONSTRAINT "UserActionEvent_userId_fkey"
-      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'UserActionEvent_tripId_fkey') THEN
-    ALTER TABLE "UserActionEvent" ADD CONSTRAINT "UserActionEvent_tripId_fkey"
-      FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'UserActionEvent_postId_fkey') THEN
-    ALTER TABLE "UserActionEvent" ADD CONSTRAINT "UserActionEvent_postId_fkey"
-      FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-  END IF;
-END $$;
+-- Foreign keys are made idempotent via paired DROP CONSTRAINT IF EXISTS / ADD CONSTRAINT
+-- statements. This is plain SQL, so any splitter (Spring SQL init, psql, etc.) handles it.
+-- Each pair is functionally equivalent to the previous PL/pgSQL "ADD if not exists" check.
+ALTER TABLE "Trip" DROP CONSTRAINT IF EXISTS "Trip_ownerId_fkey";
+ALTER TABLE "Trip" ADD CONSTRAINT "Trip_ownerId_fkey"
+  FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE "Trip" DROP CONSTRAINT IF EXISTS "Trip_coverMediaId_fkey";
+ALTER TABLE "Trip" ADD CONSTRAINT "Trip_coverMediaId_fkey"
+  FOREIGN KEY ("coverMediaId") REFERENCES "MediaAsset"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "TripPoint" DROP CONSTRAINT IF EXISTS "TripPoint_tripId_fkey";
+ALTER TABLE "TripPoint" ADD CONSTRAINT "TripPoint_tripId_fkey"
+  FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "TripPoint" DROP CONSTRAINT IF EXISTS "TripPoint_placeId_fkey";
+ALTER TABLE "TripPoint" ADD CONSTRAINT "TripPoint_placeId_fkey"
+  FOREIGN KEY ("placeId") REFERENCES "Place"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "Point" DROP CONSTRAINT IF EXISTS "Point_ownerId_fkey";
+ALTER TABLE "Point" ADD CONSTRAINT "Point_ownerId_fkey"
+  FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE "Point" DROP CONSTRAINT IF EXISTS "Point_placeId_fkey";
+ALTER TABLE "Point" ADD CONSTRAINT "Point_placeId_fkey"
+  FOREIGN KEY ("placeId") REFERENCES "Place"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "LinePoint" DROP CONSTRAINT IF EXISTS "LinePoint_lineId_fkey";
+ALTER TABLE "LinePoint" ADD CONSTRAINT "LinePoint_lineId_fkey"
+  FOREIGN KEY ("lineId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "LinePoint" DROP CONSTRAINT IF EXISTS "LinePoint_pointId_fkey";
+ALTER TABLE "LinePoint" ADD CONSTRAINT "LinePoint_pointId_fkey"
+  FOREIGN KEY ("pointId") REFERENCES "Point"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "RouteSegment" DROP CONSTRAINT IF EXISTS "RouteSegment_lineId_fkey";
+ALTER TABLE "RouteSegment" ADD CONSTRAINT "RouteSegment_lineId_fkey"
+  FOREIGN KEY ("lineId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "RouteSegment" DROP CONSTRAINT IF EXISTS "RouteSegment_fromPointId_fkey";
+ALTER TABLE "RouteSegment" ADD CONSTRAINT "RouteSegment_fromPointId_fkey"
+  FOREIGN KEY ("fromPointId") REFERENCES "Point"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE "RouteSegment" DROP CONSTRAINT IF EXISTS "RouteSegment_toPointId_fkey";
+ALTER TABLE "RouteSegment" ADD CONSTRAINT "RouteSegment_toPointId_fkey"
+  FOREIGN KEY ("toPointId") REFERENCES "Point"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE "MediaAsset" DROP CONSTRAINT IF EXISTS "MediaAsset_ownerId_fkey";
+ALTER TABLE "MediaAsset" ADD CONSTRAINT "MediaAsset_ownerId_fkey"
+  FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE "MediaAsset" DROP CONSTRAINT IF EXISTS "MediaAsset_tripId_fkey";
+ALTER TABLE "MediaAsset" ADD CONSTRAINT "MediaAsset_tripId_fkey"
+  FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "MediaAsset" DROP CONSTRAINT IF EXISTS "MediaAsset_tripPointId_fkey";
+ALTER TABLE "MediaAsset" ADD CONSTRAINT "MediaAsset_tripPointId_fkey"
+  FOREIGN KEY ("tripPointId") REFERENCES "TripPoint"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "Post" DROP CONSTRAINT IF EXISTS "Post_tripId_fkey";
+ALTER TABLE "Post" ADD CONSTRAINT "Post_tripId_fkey"
+  FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "Post" DROP CONSTRAINT IF EXISTS "Post_authorId_fkey";
+ALTER TABLE "Post" ADD CONSTRAINT "Post_authorId_fkey"
+  FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+ALTER TABLE "Post" DROP CONSTRAINT IF EXISTS "Post_coverMediaId_fkey";
+ALTER TABLE "Post" ADD CONSTRAINT "Post_coverMediaId_fkey"
+  FOREIGN KEY ("coverMediaId") REFERENCES "MediaAsset"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "PostLike" DROP CONSTRAINT IF EXISTS "PostLike_postId_fkey";
+ALTER TABLE "PostLike" ADD CONSTRAINT "PostLike_postId_fkey"
+  FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "PostLike" DROP CONSTRAINT IF EXISTS "PostLike_userId_fkey";
+ALTER TABLE "PostLike" ADD CONSTRAINT "PostLike_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "PostSave" DROP CONSTRAINT IF EXISTS "PostSave_postId_fkey";
+ALTER TABLE "PostSave" ADD CONSTRAINT "PostSave_postId_fkey"
+  FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "PostSave" DROP CONSTRAINT IF EXISTS "PostSave_userId_fkey";
+ALTER TABLE "PostSave" ADD CONSTRAINT "PostSave_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "Comment" DROP CONSTRAINT IF EXISTS "Comment_postId_fkey";
+ALTER TABLE "Comment" ADD CONSTRAINT "Comment_postId_fkey"
+  FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "Comment" DROP CONSTRAINT IF EXISTS "Comment_userId_fkey";
+ALTER TABLE "Comment" ADD CONSTRAINT "Comment_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "FeedImpression" DROP CONSTRAINT IF EXISTS "FeedImpression_userId_fkey";
+ALTER TABLE "FeedImpression" ADD CONSTRAINT "FeedImpression_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "FeedImpression" DROP CONSTRAINT IF EXISTS "FeedImpression_postId_fkey";
+ALTER TABLE "FeedImpression" ADD CONSTRAINT "FeedImpression_postId_fkey"
+  FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "UserActionEvent" DROP CONSTRAINT IF EXISTS "UserActionEvent_userId_fkey";
+ALTER TABLE "UserActionEvent" ADD CONSTRAINT "UserActionEvent_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "UserActionEvent" DROP CONSTRAINT IF EXISTS "UserActionEvent_tripId_fkey";
+ALTER TABLE "UserActionEvent" ADD CONSTRAINT "UserActionEvent_tripId_fkey"
+  FOREIGN KEY ("tripId") REFERENCES "Trip"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "UserActionEvent" DROP CONSTRAINT IF EXISTS "UserActionEvent_postId_fkey";
+ALTER TABLE "UserActionEvent" ADD CONSTRAINT "UserActionEvent_postId_fkey"
+  FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "Place_provider_providerId_key" ON "Place"("provider", "providerId");
 CREATE INDEX IF NOT EXISTS "Place_name_idx" ON "Place"("name");
