@@ -1,9 +1,11 @@
 import Link from 'next/link';
 
 import { Avatar } from '../../../src/components/Avatar';
+import { FollowButton } from '../../../src/components/profile/FollowButton';
 import { PostGrid } from '../../../src/components/profile/PostGrid';
 import { TopBar } from '../../../src/components/shell/TopBar';
 import { api } from '../../../src/lib/api';
+import { getSessionUserId } from '../../../src/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,8 +17,13 @@ export default async function UserSpacePage({
   const { userId } = await params;
 
   try {
-    const [user, posts] = await Promise.all([api.getUserProfile(userId), api.getUserPosts(userId)]);
-    const totalLikes = posts.reduce((sum, post) => sum + (post._count?.likes ?? 0), 0);
+    const [sessionUserId, user, posts, follow] = await Promise.all([
+      getSessionUserId(),
+      api.getUserProfile(userId),
+      api.getUserPosts(userId),
+      api.getFollowStatus(userId),
+    ]);
+    const isSelf = sessionUserId === userId;
 
     return (
       <div>
@@ -30,12 +37,12 @@ export default async function UserSpacePage({
               <span>作品</span>
             </div>
             <div className="profile-stat">
-              <b>{totalLikes}</b>
-              <span>获赞</span>
+              <b>{follow.followersCount}</b>
+              <span>粉丝</span>
             </div>
             <div className="profile-stat">
-              <b>{posts.reduce((sum, post) => sum + (post._count?.saves ?? 0), 0)}</b>
-              <span>被收藏</span>
+              <b>{follow.followingCount}</b>
+              <span>关注</span>
             </div>
           </div>
         </div>
@@ -45,6 +52,12 @@ export default async function UserSpacePage({
           {user.username ? <span className="username">@{user.username}</span> : null}
           {user.bio ? <p>{user.bio}</p> : null}
         </div>
+
+        {!isSelf && sessionUserId ? (
+          <div className="profile-actions">
+            <FollowButton userId={userId} initial={follow} />
+          </div>
+        ) : null}
 
         <div className="profile-tabs" style={{ marginTop: 14 }}>
           <span className="profile-tab active" style={{ gridColumn: '1 / -1' }}>

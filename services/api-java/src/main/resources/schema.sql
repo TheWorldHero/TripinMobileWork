@@ -388,3 +388,70 @@ CREATE INDEX IF NOT EXISTS "FeedImpression_postId_createdAt_idx" ON "FeedImpress
 CREATE INDEX IF NOT EXISTS "UserActionEvent_userId_createdAt_idx" ON "UserActionEvent"("userId", "createdAt");
 CREATE INDEX IF NOT EXISTS "UserActionEvent_postId_createdAt_idx" ON "UserActionEvent"("postId", "createdAt");
 CREATE INDEX IF NOT EXISTS "UserActionEvent_tripId_createdAt_idx" ON "UserActionEvent"("tripId", "createdAt");
+
+-- ───────────────────────────────────────────────────────────────
+-- 社交关注 / 站内通知 / 用户偏好（feature/mq-prefs-push-search）
+-- ───────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS "UserFollow" (
+  "id" TEXT PRIMARY KEY,
+  "followerId" TEXT NOT NULL,
+  "followeeId" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Notification" (
+  "id" TEXT PRIMARY KEY,
+  "userId" TEXT NOT NULL,
+  "type" TEXT NOT NULL,
+  "actorId" TEXT NOT NULL,
+  "postId" TEXT,
+  "commentId" TEXT,
+  "isRead" BOOLEAN NOT NULL DEFAULT FALSE,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "UserPreference" (
+  "userId" TEXT PRIMARY KEY,
+  "notifyLikes" BOOLEAN NOT NULL DEFAULT TRUE,
+  "notifyComments" BOOLEAN NOT NULL DEFAULT TRUE,
+  "notifyFollows" BOOLEAN NOT NULL DEFAULT TRUE,
+  "feedScope" TEXT NOT NULL DEFAULT 'all',
+  "language" TEXT NOT NULL DEFAULT 'zh',
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'UserFollow_followerId_fkey') THEN
+    ALTER TABLE "UserFollow" ADD CONSTRAINT "UserFollow_followerId_fkey"
+      FOREIGN KEY ("followerId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'UserFollow_followeeId_fkey') THEN
+    ALTER TABLE "UserFollow" ADD CONSTRAINT "UserFollow_followeeId_fkey"
+      FOREIGN KEY ("followeeId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Notification_userId_fkey') THEN
+    ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Notification_actorId_fkey') THEN
+    ALTER TABLE "Notification" ADD CONSTRAINT "Notification_actorId_fkey"
+      FOREIGN KEY ("actorId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Notification_postId_fkey') THEN
+    ALTER TABLE "Notification" ADD CONSTRAINT "Notification_postId_fkey"
+      FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'UserPreference_userId_fkey') THEN
+    ALTER TABLE "UserPreference" ADD CONSTRAINT "UserPreference_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "UserFollow_followerId_followeeId_key" ON "UserFollow"("followerId", "followeeId");
+CREATE INDEX IF NOT EXISTS "UserFollow_followeeId_idx" ON "UserFollow"("followeeId");
+CREATE INDEX IF NOT EXISTS "UserFollow_followerId_idx" ON "UserFollow"("followerId");
+
+CREATE INDEX IF NOT EXISTS "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt");
+CREATE INDEX IF NOT EXISTS "Notification_userId_isRead_idx" ON "Notification"("userId", "isRead");

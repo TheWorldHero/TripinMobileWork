@@ -196,3 +196,60 @@ export interface TripDraft {
     id: string;
   } | null;
 }
+
+export type NotificationType = 'like' | 'comment' | 'follow';
+
+export interface NotificationItem {
+  id: string;
+  type: NotificationType | string;
+  isRead: boolean;
+  createdAt?: string | null;
+  actor: UserSummary;
+  post?: { id: string; title?: string | null } | null;
+  commentId?: string | null;
+}
+
+export interface NotificationList {
+  items: NotificationItem[];
+  unreadCount: number;
+}
+
+export interface UserPreferences {
+  userId: string;
+  notifyLikes: boolean;
+  notifyComments: boolean;
+  notifyFollows: boolean;
+  feedScope: 'all' | 'following' | string;
+  language: string;
+}
+
+export interface FollowStatus {
+  userId: string;
+  following: boolean;
+  followersCount: number;
+  followingCount: number;
+}
+
+export interface SearchUserResult extends UserSummary {
+  followersCount?: number | null;
+  postsCount?: number | null;
+}
+
+export interface SearchPostResult {
+  id: string;
+  title: string;
+  summary?: string | null;
+  cityName?: string | null;
+  pointCount?: number | null;
+  mediaCount?: number | null;
+  publishedAt?: string | null;
+  author?: UserSummary | null;
+  coverMedia?: MediaAsset | null;
+}
+
+export interface SearchResults {
+  query: string;
+  posts: SearchPostResult[];
+  users: SearchUserResult[];
+  places: PlaceCandidate[];
+}

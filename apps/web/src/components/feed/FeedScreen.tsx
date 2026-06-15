@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import type { FeedItem } from '../../types';
+import { NotificationBell } from '../notifications/NotificationBell';
 import { FeedCard } from './FeedCard';
 
 export function FeedScreen({
@@ -21,11 +22,19 @@ export function FeedScreen({
           Trip<em>In</em>
         </span>
         <span className="topbar-spacer" />
-        {!loggedIn ? (
+        <Link href="/search" className="icon-btn" aria-label="搜索">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+        </Link>
+        {loggedIn ? (
+          <NotificationBell />
+        ) : (
           <Link href="/login" className="topbar-action">
             登录
           </Link>
-        ) : null}
+        )}
       </header>
 
       {error ? <div className="notice error">{error}</div> : null}

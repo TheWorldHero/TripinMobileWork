@@ -27,11 +27,15 @@ export function MeScreen({
   posts,
   saves,
   trips: initialTrips,
+  followersCount,
+  followingCount,
 }: {
   user: UserSummary;
   posts: FeedItem[];
   saves: FeedItem[];
   trips: TripDraft[];
+  followersCount: number;
+  followingCount: number;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<TabKey>('posts');
@@ -81,12 +85,12 @@ export function MeScreen({
             <span>作品</span>
           </div>
           <div className="profile-stat">
-            <b>{drafts.length}</b>
-            <span>草稿</span>
+            <b>{followersCount}</b>
+            <span>粉丝</span>
           </div>
           <div className="profile-stat">
-            <b>{saves.length}</b>
-            <span>收藏</span>
+            <b>{followingCount}</b>
+            <span>关注</span>
           </div>
         </div>
       </div>
@@ -101,8 +105,8 @@ export function MeScreen({
         <Link href="/me/profile" className="btn btn-secondary">
           编辑资料
         </Link>
-        <Link href="/studio" className="btn btn-secondary">
-          去工作台
+        <Link href="/me/preferences" className="btn btn-secondary">
+          设置
         </Link>
       </div>
 

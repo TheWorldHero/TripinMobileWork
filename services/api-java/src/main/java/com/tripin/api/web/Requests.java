@@ -80,6 +80,13 @@ public final class Requests {
 
   public record CreateCommentRequest(String content) {}
 
+  public record UpdatePreferenceRequest(
+      Boolean notifyLikes,
+      Boolean notifyComments,
+      Boolean notifyFollows,
+      String feedScope,
+      String language) {}
+
   public record CreatePlaceRequest(
       String provider,
       String providerId,

@@ -3,15 +3,22 @@
   FeedItem,
   FeedRoutePreviewPoint,
   FeedResponse,
+  FollowStatus,
   MediaAsset,
+  NotificationItem,
+  NotificationList,
   PlaceCandidate,
   RouteCounts,
   RouteCoordinate,
   RouteDetail,
   RoutePoint,
   RouteSegment,
+  SearchPostResult,
+  SearchResults,
+  SearchUserResult,
   TripDraft,
   TripDraftPoint,
+  UserPreferences,
   UserSummary,
   ViewerInteractionState,
 } from '../types';
@@ -567,6 +574,32 @@ function normalizePlaceCandidate(place: RawPlaceCandidate): PlaceCandidate {
     latitude: toNumber(place.latitude),
     longitude: toNumber(place.longitude),
     source: place.source ?? null,
+  };
+}
+
+type RawSearchPost = {
+  id: string;
+  title: string;
+  summary?: string | null;
+  cityName?: string | null;
+  pointCount?: number | null;
+  mediaCount?: number | null;
+  publishedAt?: string | null;
+  author?: UserSummary | null;
+  coverMedia?: RawMediaAsset | null;
+};
+
+function normalizeSearchPost(post: RawSearchPost): SearchPostResult {
+  return {
+    id: post.id,
+    title: post.title,
+    summary: post.summary ?? null,
+    cityName: post.cityName ?? null,
+    pointCount: post.pointCount ?? 0,
+    mediaCount: post.mediaCount ?? 0,
+    publishedAt: post.publishedAt ?? null,
+    author: post.author ?? null,
+    coverMedia: normalizeMediaAsset(post.coverMedia),
   };
 }
 
@@ -1196,6 +1229,115 @@ export const api = {
       throw new Error('Failed to delete trip.');
     }
     return response;
+  },
+
+  // ─────────────── 站内通知 ───────────────
+
+  async getNotifications(limit = 30, offset = 0): Promise<NotificationList> {
+    const response = await request<{
+      items?: NotificationItem[] | null;
+      unreadCount?: number | null;
+    }>(`/notifications?limit=${limit}&offset=${offset}`);
+    return {
+      items: response?.items ?? [],
+      unreadCount: response?.unreadCount ?? 0,
+    };
+  },
+
+  async getUnreadNotificationCount(): Promise<number> {
+    const response = await request<{ unreadCount?: number | null }>('/notifications/unread-count', {
+      allowNotFound: true,
+    });
+    return response?.unreadCount ?? 0;
+  },
+
+  async markNotificationRead(id: string): Promise<number> {
+    const response = await request<{ unreadCount?: number | null }>(`/notifications/${id}/read`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return response?.unreadCount ?? 0;
+  },
+
+  async markAllNotificationsRead(): Promise<number> {
+    const response = await request<{ unreadCount?: number | null }>('/notifications/read-all', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return response?.unreadCount ?? 0;
+  },
+
+  // ─────────────── 用户偏好 ───────────────
+
+  async getPreferences(): Promise<UserPreferences> {
+    const response = await request<UserPreferences>('/users/me/preferences');
+    if (!response) {
+      throw new Error('Failed to load preferences.');
+    }
+    return response;
+  },
+
+  async updatePreferences(
+    payload: Partial<Omit<UserPreferences, 'userId'>>,
+  ): Promise<UserPreferences> {
+    const response = await request<UserPreferences>('/users/me/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    if (!response) {
+      throw new Error('Failed to update preferences.');
+    }
+    return response;
+  },
+
+  // ─────────────── 关注 ───────────────
+
+  async getFollowStatus(userId: string): Promise<FollowStatus> {
+    const response = await request<FollowStatus>(`/users/${userId}/follow`, { allowNotFound: true });
+    return response ?? { userId, following: false, followersCount: 0, followingCount: 0 };
+  },
+
+  async followUser(userId: string): Promise<FollowStatus> {
+    const response = await request<FollowStatus>(`/users/${userId}/follow`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    if (!response) {
+      throw new Error('Failed to follow user.');
+    }
+    return response;
+  },
+
+  async unfollowUser(userId: string): Promise<FollowStatus> {
+    const response = await request<FollowStatus>(`/users/${userId}/follow`, {
+      method: 'DELETE',
+    });
+    if (!response) {
+      throw new Error('Failed to unfollow user.');
+    }
+    return response;
+  },
+
+  // ─────────────── 搜索 ───────────────
+
+  async search(
+    query: string,
+    type: 'all' | 'posts' | 'users' | 'places' = 'all',
+    limit = 20,
+  ): Promise<SearchResults> {
+    const params = new URLSearchParams({ q: query, type, limit: String(limit) });
+    const response = await request<{
+      query?: string | null;
+      posts?: RawSearchPost[] | null;
+      users?: SearchUserResult[] | null;
+      places?: RawPlaceCandidate[] | null;
+    }>(`/search?${params.toString()}`);
+    return {
+      query: response?.query ?? query,
+      posts: (response?.posts ?? []).map(normalizeSearchPost),
+      users: response?.users ?? [],
+      places: (response?.places ?? []).map(normalizePlaceCandidate),
+    };
   },
 };
 

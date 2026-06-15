@@ -1,5 +1,7 @@
 package com.tripin.api.service;
 
+import com.tripin.api.mq.DomainEvent;
+import com.tripin.api.mq.EventPublisher;
 import com.tripin.api.support.DbSupport;
 import com.tripin.api.support.JsonSupport;
 import com.tripin.api.web.Requests.CreateCommentRequest;
@@ -17,23 +19,31 @@ public class InteractionsService {
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
+  private final EventPublisher events;
 
-  public InteractionsService(DbSupport db, JsonSupport json, UserService userService) {
+  public InteractionsService(
+      DbSupport db, JsonSupport json, UserService userService, EventPublisher events) {
     this.db = db;
     this.json = json;
     this.userService = userService;
+    this.events = events;
   }
 
   public Map<String, Object> likePost(String userId, String postId) {
-    ensurePostAndUser(userId, postId);
-    db.update(
-        """
-        insert into "PostLike" (id, "postId", "userId")
-        values (:id, :postId, :userId)
-        on conflict ("postId", "userId") do nothing
-        """,
-        Map.of("id", json.newId("like"), "postId", postId, "userId", userId));
+    Map<String, Object> post = ensurePostAndUser(userId, postId);
+    int inserted =
+        db.update(
+            """
+            insert into "PostLike" (id, "postId", "userId")
+            values (:id, :postId, :userId)
+            on conflict ("postId", "userId") do nothing
+            """,
+            Map.of("id", json.newId("like"), "postId", postId, "userId", userId));
     logEvent(userId, postId, "post_liked", null);
+    if (inserted > 0) {
+      events.publish(
+          DomainEvent.postLiked(userId, json.stringValue(post.get("author_id")), postId));
+    }
     return getPostInteractionState(postId, userId);
   }
 
@@ -67,7 +77,7 @@ public class InteractionsService {
   }
 
   public Map<String, Object> createComment(String userId, String postId, CreateCommentRequest request) {
-    ensurePostAndUser(userId, postId);
+    Map<String, Object> post = ensurePostAndUser(userId, postId);
     String content = validatedCommentContent(request);
 
     String commentId = json.newId("comment");
@@ -89,6 +99,8 @@ public class InteractionsService {
             Map.of("id", commentId));
 
     logEvent(userId, postId, "post_commented", Map.of("contentLength", request.content().length()));
+    events.publish(
+        DomainEvent.postCommented(userId, json.stringValue(post.get("author_id")), postId, commentId));
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("id", comment.get("id"));
