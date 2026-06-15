@@ -7,15 +7,23 @@ import com.tripin.api.web.Requests.RegisterRequest;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.spec.InvalidKeySpecException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AuthService {
+  private static final int PBKDF2_ITERATIONS = 210_000;
+  private static final int PBKDF2_KEY_BITS = 256;
+  private static final String PBKDF2_PREFIX = "pbkdf2$";
+  private static final int MIN_PASSWORD_LENGTH = 6;
+
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
@@ -35,13 +43,18 @@ public class AuthService {
           HttpStatus.BAD_REQUEST, "username, displayName and password are required");
     }
 
+    if (request.password().length() < MIN_PASSWORD_LENGTH) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "密码长度至少需要 " + MIN_PASSWORD_LENGTH + " 位");
+    }
+
     String username = request.username().trim();
     String email = isBlank(request.email()) ? null : request.email().trim().toLowerCase();
     validateUniqueness(username, email);
 
     String userId = json.newId("user");
     String salt = json.newId("salt");
-    String passwordHash = hashPassword(request.password(), salt);
+    String passwordHash = hashPasswordPbkdf2(request.password(), salt);
 
     Map<String, Object> params = new LinkedHashMap<>();
     params.put("id", userId);
@@ -117,11 +130,19 @@ public class AuthService {
       throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "账号还未设置密码");
     }
 
-    if (!passwordHash.equals(hashPassword(request.password(), passwordSalt))) {
+    if (!verifyPassword(request.password(), passwordSalt, passwordHash)) {
       throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "账号或密码错误");
     }
 
-    Map<String, Object> user = userService.findRequired(json.stringValue(row.get("id")));
+    String userId = json.stringValue(row.get("id"));
+    if (!passwordHash.startsWith(PBKDF2_PREFIX)) {
+      // Transparently re-hash legacy SHA-256 credentials with PBKDF2 on successful login.
+      db.update(
+          "update \"User\" set \"passwordHash\" = :hash, \"updatedAt\" = now() where id = :id",
+          Map.of("hash", hashPasswordPbkdf2(request.password(), passwordSalt), "id", userId));
+    }
+
+    Map<String, Object> user = userService.findRequired(userId);
     return buildAuthResponse(user);
   }
 
@@ -148,18 +169,62 @@ public class AuthService {
     }
   }
 
-  private String hashPassword(String password, String salt) {
+  private boolean verifyPassword(String password, String salt, String storedHash) {
+    if (storedHash.startsWith(PBKDF2_PREFIX)) {
+      String[] parts = storedHash.split("\\$");
+      if (parts.length != 3) {
+        return false;
+      }
+      int iterations;
+      try {
+        iterations = Integer.parseInt(parts[1]);
+      } catch (NumberFormatException exception) {
+        return false;
+      }
+      return constantTimeEquals(parts[2], pbkdf2Hex(password, salt, iterations));
+    }
+    return constantTimeEquals(storedHash, legacySha256(password, salt));
+  }
+
+  private String hashPasswordPbkdf2(String password, String salt) {
+    return PBKDF2_PREFIX + PBKDF2_ITERATIONS + "$" + pbkdf2Hex(password, salt, PBKDF2_ITERATIONS);
+  }
+
+  private String pbkdf2Hex(String password, String salt, int iterations) {
+    try {
+      PBEKeySpec spec =
+          new PBEKeySpec(
+              password.toCharArray(),
+              salt.getBytes(StandardCharsets.UTF_8),
+              iterations,
+              PBKDF2_KEY_BITS);
+      SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+      return toHex(factory.generateSecret(spec).getEncoded());
+    } catch (NoSuchAlgorithmException | InvalidKeySpecException exception) {
+      throw new IllegalStateException("PBKDF2 is unavailable", exception);
+    }
+  }
+
+  private String legacySha256(String password, String salt) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] bytes = digest.digest((salt + ":" + password).getBytes(StandardCharsets.UTF_8));
-      StringBuilder builder = new StringBuilder(bytes.length * 2);
-      for (byte current : bytes) {
-        builder.append(String.format("%02x", current));
-      }
-      return builder.toString();
+      return toHex(digest.digest((salt + ":" + password).getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
     }
+  }
+
+  private boolean constantTimeEquals(String expected, String actual) {
+    return MessageDigest.isEqual(
+        expected.getBytes(StandardCharsets.UTF_8), actual.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private String toHex(byte[] bytes) {
+    StringBuilder builder = new StringBuilder(bytes.length * 2);
+    for (byte current : bytes) {
+      builder.append(String.format("%02x", current));
+    }
+    return builder.toString();
   }
 
   private boolean isBlank(String value) {

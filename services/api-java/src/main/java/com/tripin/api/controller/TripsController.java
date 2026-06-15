@@ -60,6 +60,13 @@ public class TripsController {
     return tripsService.updateTrip(currentUserResolver.resolve(userId), tripId, request);
   }
 
+  @DeleteMapping("/{tripId}")
+  public Map<String, Object> delete(
+      @RequestHeader(value = "x-user-id", required = false) String userId,
+      @PathVariable String tripId) {
+    return tripsService.deleteTrip(currentUserResolver.resolve(userId), tripId);
+  }
+
   @PostMapping("/{tripId}/points")
   public Map<String, Object> createPoint(
       @RequestHeader(value = "x-user-id", required = false) String userId,

@@ -1,25 +1,11 @@
 import Link from 'next/link';
 
-import { RouteStoryPreview } from '../../../src/components/RouteStoryPreview';
+import { PostDetailScreen } from '../../../src/components/post/PostDetailScreen';
 import { api } from '../../../src/lib/api';
+import { getSessionUserId } from '../../../src/lib/session';
 import type { RouteDetail } from '../../../src/types';
 
 export const dynamic = 'force-dynamic';
-
-function RouteFailure({ routeId, message }: { routeId: string; message: string }) {
-  return (
-    <main className="site-shell route-page">
-      <section className="route-header route-header-empty">
-        <p className="eyebrow">路线暂时不可用</p>
-        <h1 className="page-title">这篇路线内容暂时打不开。</h1>
-        <p className="hero-copy">{message || `没有找到对应的路线记录：${routeId}`}</p>
-        <Link className="text-link" href="/">
-          返回首页
-        </Link>
-      </section>
-    </main>
-  );
-}
 
 export default async function RoutePage({
   params,
@@ -27,22 +13,24 @@ export default async function RoutePage({
   params: Promise<{ routeId: string }>;
 }) {
   const { routeId } = await params;
+  const sessionUserId = await getSessionUserId();
 
   let route: RouteDetail;
   try {
     route = await api.getRoute(routeId);
   } catch (error) {
     return (
-      <RouteFailure
-        routeId={routeId}
-        message={error instanceof Error ? error.message : '读取路线时发生了未知错误。'}
-      />
+      <div>
+        <div className="empty-state">
+          <b>这篇内容暂时打不开</b>
+          <span>{error instanceof Error ? error.message : `没有找到对应的记录：${routeId}`}</span>
+          <Link className="btn btn-secondary" href="/">
+            返回首页
+          </Link>
+        </div>
+      </div>
     );
   }
 
-  return (
-    <main className="site-shell route-page">
-      <RouteStoryPreview route={route} backHref="/" backLabel="首页" />
-    </main>
-  );
+  return <PostDetailScreen detail={route} sessionUserId={sessionUserId} />;
 }

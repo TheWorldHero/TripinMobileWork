@@ -1,11 +1,19 @@
 import './globals.css';
 
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 
+import { TabBar } from '../src/components/shell/TabBar';
+
 export const metadata: Metadata = {
-  title: 'TripIn 旅行路线社区',
-  description: 'TripIn 的路线浏览、回看与编辑界面。',
+  title: 'TripIn',
+  description: '记录路线、分享生活的社区。',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -15,7 +23,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <div className="phone">
+          <main className="phone-main">{children}</main>
+          <TabBar />
+        </div>
+      </body>
     </html>
   );
 }

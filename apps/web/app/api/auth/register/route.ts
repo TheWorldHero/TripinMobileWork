@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { SESSION_COOKIE_NAME } from '../../../../src/lib/session';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1';
+import { API_BASE_URL } from '../../../../src/lib/config';
 
 export async function POST(request: Request) {
   const body = await request.json();

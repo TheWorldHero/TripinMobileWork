@@ -186,6 +186,29 @@ public class TripsService {
     return getTrip(userId, tripId);
   }
 
+  public Map<String, Object> deleteTrip(String userId, String tripId) {
+    assertTripOwner(userId, tripId);
+
+    transactionTemplate.executeWithoutResult(
+        status -> {
+          // Detach media first so assets survive the trip (tripId/tripPointId become null).
+          db.update(
+              """
+              update "MediaAsset"
+              set "tripId" = null, "tripPointId" = null, "updatedAt" = now()
+              where "tripId" = :tripId and "ownerId" = :ownerId
+              """,
+              Map.of("tripId", tripId, "ownerId", userId));
+          // Trip points, the post and its interactions cascade with the trip row.
+          db.update("delete from \"Trip\" where id = :id", Map.of("id", tripId));
+        });
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("ok", true);
+    result.put("tripId", tripId);
+    return result;
+  }
+
   public Map<String, Object> loadTripView(String tripId) {
     Map<String, Object> trip =
         db.first(
@@ -446,14 +469,18 @@ public class TripsService {
 
     transactionTemplate.executeWithoutResult(
         status -> {
-          for (int index = 0; index < request.pointIds().size(); index++) {
+          List<String> ids = request.pointIds();
+          // 两段式：先挪到不冲突的负值区，再写最终序号，
+          // 避免交换时与 (tripId, sequence) 唯一约束撞车。
+          for (int index = 0; index < ids.size(); index++) {
             db.update(
-                """
-                update "TripPoint"
-                set sequence = :sequence, "updatedAt" = now()
-                where id = :id
-                """,
-                Map.of("sequence", index + 1, "id", request.pointIds().get(index)));
+                "update \"TripPoint\" set sequence = :sequence where id = :id",
+                Map.of("sequence", -(index + 1), "id", ids.get(index)));
+          }
+          for (int index = 0; index < ids.size(); index++) {
+            db.update(
+                "update \"TripPoint\" set sequence = :sequence, \"updatedAt\" = now() where id = :id",
+                Map.of("sequence", index + 1, "id", ids.get(index)));
           }
           refreshTripAggregates(tripId);
         });
@@ -854,13 +881,15 @@ public class TripsService {
             """,
             Map.of("tripId", tripId));
 
+    // 两段式重排，避免与 (tripId, sequence) 唯一约束在过程中撞车。
     for (int index = 0; index < points.size(); index++) {
       db.update(
-          """
-          update "TripPoint"
-          set sequence = :sequence, "updatedAt" = now()
-          where id = :id
-          """,
+          "update \"TripPoint\" set sequence = :sequence where id = :id",
+          Map.of("sequence", -(index + 1), "id", points.get(index).get("id")));
+    }
+    for (int index = 0; index < points.size(); index++) {
+      db.update(
+          "update \"TripPoint\" set sequence = :sequence, \"updatedAt\" = now() where id = :id",
           Map.of("sequence", index + 1, "id", points.get(index).get("id")));
     }
   }

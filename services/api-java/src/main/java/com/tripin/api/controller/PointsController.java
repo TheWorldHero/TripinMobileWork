@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -42,7 +43,8 @@ public class PointsController {
 
   @GetMapping("/inbox")
   public Map<String, Object> inbox(
-      @RequestHeader(value = "x-user-id", required = false) String userId) {
-    return pointsService.getInbox(currentUserResolver.resolve(userId));
+      @RequestHeader(value = "x-user-id", required = false) String userId,
+      @RequestParam(required = false) Integer limit) {
+    return pointsService.getInbox(currentUserResolver.resolve(userId), limit);
   }
 }

@@ -7,11 +7,13 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -63,7 +65,26 @@ public class InteractionsController {
   }
 
   @GetMapping("/comments")
-  public List<Map<String, Object>> listComments(@PathVariable String postId) {
-    return interactionsService.listComments(postId);
+  public List<Map<String, Object>> listComments(
+      @PathVariable String postId, @RequestParam(required = false) Integer limit) {
+    return interactionsService.listComments(postId, limit);
+  }
+
+  @PatchMapping("/comments/{commentId}")
+  public Map<String, Object> updateComment(
+      @RequestHeader(value = "x-user-id", required = false) String userId,
+      @PathVariable String postId,
+      @PathVariable String commentId,
+      @RequestBody CreateCommentRequest request) {
+    return interactionsService.updateComment(
+        currentUserResolver.resolve(userId), postId, commentId, request);
+  }
+
+  @DeleteMapping("/comments/{commentId}")
+  public Map<String, Object> deleteComment(
+      @RequestHeader(value = "x-user-id", required = false) String userId,
+      @PathVariable String postId,
+      @PathVariable String commentId) {
+    return interactionsService.deleteComment(currentUserResolver.resolve(userId), postId, commentId);
   }
 }

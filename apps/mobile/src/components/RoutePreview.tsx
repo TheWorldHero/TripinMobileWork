@@ -7,6 +7,7 @@ interface RoutePreviewProps {
   height?: number;
   selectedPointId?: string | null;
   onPointPress?: (pointId: string) => void;
+  surface?: 'feed' | 'panel';
 }
 
 interface RenderPoint {
@@ -58,6 +59,7 @@ export const RoutePreview = memo(function RoutePreview({
   height = 180,
   selectedPointId,
   onPointPress,
+  surface = 'panel',
 }: RoutePreviewProps) {
   const [boardWidth, setBoardWidth] = useState(320);
   const routePoints = points ?? [];
@@ -71,14 +73,18 @@ export const RoutePreview = memo(function RoutePreview({
   }
 
   return (
-    <View style={[styles.board, { height }]} onLayout={handleLayout}>
-      <View style={styles.gridBackground} />
-      <View style={styles.glowTopRight} />
-      <View style={styles.glowBottomLeft} />
-      <View style={styles.gridVerticalA} />
-      <View style={styles.gridVerticalB} />
-      <View style={styles.gridHorizontalA} />
-      <View style={styles.gridHorizontalB} />
+    <View style={[styles.board, surface === 'feed' ? styles.boardFeed : styles.boardPanel, { height }]} onLayout={handleLayout}>
+      <View style={styles.mapBase} />
+      <View style={styles.mapWater} />
+      <View style={styles.mapPark} />
+      <View style={[styles.mapParcel, styles.mapParcelA]} />
+      <View style={[styles.mapParcel, styles.mapParcelB]} />
+      <View style={[styles.mapParcel, styles.mapParcelC]} />
+      <View style={[styles.mapRoad, styles.mapRoadMain]} />
+      <View style={[styles.mapRoad, styles.mapRoadCross]} />
+      <View style={[styles.mapRoad, styles.mapRoadSoft]} />
+      <View style={[styles.mapRoad, styles.mapRoadFineA]} />
+      <View style={[styles.mapRoad, styles.mapRoadFineB]} />
 
       {!renderPoints.length ? (
         <View style={styles.placeholderWrap}>
@@ -105,19 +111,18 @@ export const RoutePreview = memo(function RoutePreview({
         const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
         const angle = Math.atan2(deltaY, deltaX);
 
+        const segmentStyle = {
+          left: point.x + deltaX / 2 - length / 2,
+          top: point.y + deltaY / 2 - 3,
+          width: length,
+          transform: [{ rotate: `${angle}rad` }],
+        };
+
         return (
-          <View
-            key={`line-${point.sequence}-${nextPoint.sequence}`}
-            style={[
-              styles.routeLine,
-              {
-                left: point.x + deltaX / 2 - length / 2,
-                top: point.y + deltaY / 2 - 1.5,
-                width: length,
-                transform: [{ rotate: `${angle}rad` }],
-              },
-            ]}
-          />
+          <View key={`line-${point.sequence}-${nextPoint.sequence}`}>
+            <View style={[styles.routeLineShadow, segmentStyle]} />
+            <View style={[styles.routeLine, segmentStyle]} />
+          </View>
         );
       })}
 
@@ -130,8 +135,8 @@ export const RoutePreview = memo(function RoutePreview({
           isStart ? styles.routePointStart : isEnd ? styles.routePointEnd : null,
           isSelected ? styles.routePointSelected : null,
           {
-            left: point.x - 13,
-            top: point.y - 13,
+            left: point.x - (isSelected ? 16 : 13),
+            top: point.y - (isSelected ? 16 : 13),
           },
         ];
         const labelStyle = [
@@ -139,7 +144,7 @@ export const RoutePreview = memo(function RoutePreview({
           isStart ? styles.routePointLabelLight : isEnd ? styles.routePointLabelDark : null,
           isSelected ? styles.routePointLabelSelected : null,
         ];
-        const label = isStart ? 'S' : isEnd ? 'E' : point.sequence;
+        const label = isStart ? '起' : isEnd ? '终' : point.sequence;
 
         if (onPointPress) {
           return (
@@ -168,115 +173,167 @@ export const RoutePreview = memo(function RoutePreview({
 const styles = StyleSheet.create({
   board: {
     width: '100%',
-    borderRadius: 28,
     overflow: 'hidden',
-    backgroundColor: '#ede4d4',
-    borderWidth: 1,
-    borderColor: '#e0d2bf',
+    backgroundColor: '#eef7ff',
     position: 'relative',
   },
-  gridBackground: {
+  boardFeed: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#dbeafe',
+  },
+  boardPanel: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#d7e6ff',
+  },
+  mapBase: {
     ...StyleSheet.absoluteFillObject,
-    opacity: 0.94,
-    backgroundColor: '#f1e8da',
+    backgroundColor: '#eef7ff',
   },
-  glowTopRight: {
+  mapWater: {
     position: 'absolute',
-    right: -30,
-    top: -18,
-    width: 120,
-    height: 120,
+    left: '-10%',
+    right: '-8%',
+    top: '38%',
+    height: 34,
     borderRadius: 999,
-    backgroundColor: '#f6d6a3',
-    opacity: 0.45,
+    backgroundColor: '#d6efff',
+    transform: [{ rotate: '-7deg' }],
   },
-  glowBottomLeft: {
+  mapPark: {
     position: 'absolute',
-    left: -18,
-    bottom: -20,
-    width: 136,
-    height: 110,
+    right: '-10%',
+    bottom: '-14%',
+    width: '46%',
+    height: '52%',
+    borderRadius: 80,
+    backgroundColor: '#e7f6ed',
+  },
+  mapParcel: {
+    position: 'absolute',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(147, 197, 253, 0.34)',
+  },
+  mapParcelA: {
+    left: -24,
+    top: 12,
+    width: '45%',
+    height: '42%',
+    backgroundColor: 'rgba(255, 255, 255, 0.52)',
+  },
+  mapParcelB: {
+    right: -18,
+    top: 18,
+    width: '38%',
+    height: '34%',
+    backgroundColor: 'rgba(255, 255, 255, 0.44)',
+  },
+  mapParcelC: {
+    left: '26%',
+    bottom: -16,
+    width: '52%',
+    height: '36%',
+    backgroundColor: 'rgba(255, 255, 255, 0.42)',
+  },
+  mapRoad: {
+    position: 'absolute',
+    height: 6,
     borderRadius: 999,
-    backgroundColor: '#c8d8d0',
-    opacity: 0.5,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
   },
-  gridVerticalA: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: '24%',
-    width: 1,
-    backgroundColor: '#ddcfb9',
+  mapRoadMain: {
+    left: -20,
+    right: -20,
+    top: '50%',
+    transform: [{ rotate: '-5deg' }],
   },
-  gridVerticalB: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: '70%',
-    width: 1,
-    backgroundColor: '#ddcfb9',
+  mapRoadCross: {
+    left: '18%',
+    width: '78%',
+    top: '28%',
+    transform: [{ rotate: '16deg' }],
   },
-  gridHorizontalA: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: '34%',
-    height: 1,
-    backgroundColor: '#ddcfb9',
+  mapRoadSoft: {
+    left: '-8%',
+    width: '64%',
+    top: '72%',
+    opacity: 0.78,
+    transform: [{ rotate: '9deg' }],
   },
-  gridHorizontalB: {
+  mapRoadFineA: {
+    left: '36%',
+    width: '72%',
+    top: '61%',
+    height: 4,
+    opacity: 0.72,
+    transform: [{ rotate: '-3deg' }],
+  },
+  mapRoadFineB: {
+    left: '-14%',
+    width: '58%',
+    top: '18%',
+    height: 4,
+    opacity: 0.62,
+    transform: [{ rotate: '19deg' }],
+  },
+  routeLineShadow: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    top: '68%',
-    height: 1,
-    backgroundColor: '#ddcfb9',
+    height: 12,
+    backgroundColor: 'rgba(2, 132, 199, 0.18)',
+    borderRadius: 999,
   },
   routeLine: {
     position: 'absolute',
-    height: 4,
-    backgroundColor: '#11443f',
+    height: 7,
+    backgroundColor: '#1d4ed8',
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#7dd3fc',
   },
   routePoint: {
     position: 'absolute',
     width: 26,
     height: 26,
     borderRadius: 999,
-    backgroundColor: '#fffaf1',
+    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2.5,
-    borderColor: '#11443f',
+    borderWidth: 3,
+    borderColor: '#1d4ed8',
+    elevation: 2,
   },
   routePointStart: {
-    backgroundColor: '#173f39',
+    backgroundColor: '#1d4ed8',
   },
   routePointEnd: {
-    backgroundColor: '#d9b67d',
-    borderColor: '#8d5f1f',
+    backgroundColor: '#0284c7',
+    borderColor: '#0369a1',
   },
   routePointSelected: {
     width: 32,
     height: 32,
-    borderWidth: 4,
-    borderColor: '#2563eb',
-    backgroundColor: '#2563eb',
-    shadowColor: '#2563eb',
-    shadowOpacity: 0.28,
-    shadowRadius: 10,
-    elevation: 4,
+    borderWidth: 3,
+    borderColor: '#fff',
+    backgroundColor: '#1d4ed8',
+    shadowColor: '#0284c7',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
   },
   routePointLabel: {
-    color: '#173430',
+    color: '#1d4ed8',
     fontSize: 11,
     fontWeight: '800',
   },
   routePointLabelLight: {
-    color: '#fff9f0',
+    color: '#fff',
   },
   routePointLabelDark: {
-    color: '#5a3a12',
+    color: '#fff',
   },
   routePointLabelSelected: {
     color: '#fff',
@@ -296,19 +353,19 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 999,
-    backgroundColor: '#fffaf1',
+    backgroundColor: '#fff',
     borderWidth: 2,
-    borderColor: '#c0af97',
+    borderColor: '#93c5fd',
   },
   placeholderLine: {
     position: 'absolute',
     height: 3,
-    backgroundColor: '#d4c4ae',
+    backgroundColor: '#bfdbfe',
     borderRadius: 999,
   },
   placeholderLabel: {
     marginTop: 8,
-    color: '#7a857f',
+    color: '#64748b',
     fontSize: 13,
     fontWeight: '600',
   },

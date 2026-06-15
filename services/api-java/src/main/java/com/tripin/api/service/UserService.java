@@ -101,8 +101,10 @@ public class UserService {
     return findRequired(targetUserId);
   }
 
-  public List<Map<String, Object>> listPublishedPosts(String userId) {
+  public List<Map<String, Object>> listPublishedPosts(String userId, Integer rawLimit, Integer rawOffset) {
     ensureExists(userId);
+    int limit = clampPageSize(rawLimit);
+    int offset = rawOffset == null ? 0 : Math.max(0, rawOffset);
     return db.list(
             """
             select
@@ -135,15 +137,18 @@ public class UserService {
               and p.status = cast('ACTIVE' as "PostStatus")
               and p.visibility = cast('PUBLIC' as "Visibility")
             order by p."publishedAt" desc
+            limit :limit offset :offset
             """,
-            Map.of("userId", userId))
+            Map.of("userId", userId, "limit", limit, "offset", offset))
         .stream()
         .map(row -> toPostCard(row, userId))
         .toList();
   }
 
-  public List<Map<String, Object>> listSavedPosts(String userId) {
+  public List<Map<String, Object>> listSavedPosts(String userId, Integer rawLimit, Integer rawOffset) {
     ensureExists(userId);
+    int limit = clampPageSize(rawLimit);
+    int offset = rawOffset == null ? 0 : Math.max(0, rawOffset);
     return db.list(
             """
             select
@@ -177,11 +182,19 @@ public class UserService {
               and p.status = cast('ACTIVE' as "PostStatus")
               and p.visibility = cast('PUBLIC' as "Visibility")
             order by s."createdAt" desc
+            limit :limit offset :offset
             """,
-            Map.of("userId", userId))
+            Map.of("userId", userId, "limit", limit, "offset", offset))
         .stream()
         .map(row -> toPostCard(row, userId))
         .toList();
+  }
+
+  private int clampPageSize(Integer value) {
+    if (value == null) {
+      return 50;
+    }
+    return Math.max(1, Math.min(100, value));
   }
 
   public Map<String, Object> findRequired(String userId) {

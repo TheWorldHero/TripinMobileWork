@@ -14,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class MediaService {
+  private static final int MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
@@ -38,6 +40,21 @@ public class MediaService {
         || request.bytes() <= 0) {
       throw new ResponseStatusException(
           HttpStatus.BAD_REQUEST, "originalName, mimeType and bytes are required");
+    }
+    if (request.bytes() > MAX_MEDIA_BYTES) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "media exceeds the " + (MAX_MEDIA_BYTES / 1024 / 1024) + "MB limit");
+    }
+    String mimeType = request.mimeType().trim().toLowerCase();
+    if (!mimeType.startsWith("image/")
+        && !mimeType.startsWith("video/")
+        && !mimeType.startsWith("audio/")
+        && !mimeType.equals("application/octet-stream")) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported media type: " + mimeType);
+    }
+    if ((request.width() != null && request.width() < 0)
+        || (request.height() != null && request.height() < 0)) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "width/height must be non-negative");
     }
 
     userService.ensureExists(userId);

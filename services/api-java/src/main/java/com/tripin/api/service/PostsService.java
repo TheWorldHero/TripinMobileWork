@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -15,12 +16,19 @@ public class PostsService {
   private final JsonSupport json;
   private final UserService userService;
   private final TripsService tripsService;
+  private final TransactionTemplate transactionTemplate;
 
-  public PostsService(DbSupport db, JsonSupport json, UserService userService, TripsService tripsService) {
+  public PostsService(
+      DbSupport db,
+      JsonSupport json,
+      UserService userService,
+      TripsService tripsService,
+      TransactionTemplate transactionTemplate) {
     this.db = db;
     this.json = json;
     this.userService = userService;
     this.tripsService = tripsService;
+    this.transactionTemplate = transactionTemplate;
   }
 
   public Map<String, Object> getPost(String viewerUserId, String postId) {
@@ -97,6 +105,41 @@ public class PostsService {
                 Map.of("postId", postId, "userId", viewerUserId))
             != null);
     result.put("viewerState", viewerState);
+    return result;
+  }
+
+  public Map<String, Object> deletePost(String userId, String postId) {
+    userService.ensureExists(userId);
+    Map<String, Object> row =
+        db.first(
+            "select id, \"authorId\" as author_id, \"tripId\" as trip_id from \"Post\" where id = :id",
+            Map.of("id", postId));
+    if (row == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found");
+    }
+    if (!userId.equals(json.stringValue(row.get("author_id")))) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the author can delete this post");
+    }
+
+    String tripId = json.stringValue(row.get("trip_id"));
+    transactionTemplate.executeWithoutResult(
+        status -> {
+          // Likes, saves, comments and impressions cascade with the post row.
+          db.update("delete from \"Post\" where id = :id", Map.of("id", postId));
+          // The backing trip is kept (archived) so its points/media remain editable as a draft.
+          db.update(
+              """
+              update "Trip"
+              set status = cast('ARCHIVED' as "TripStatus"), "updatedAt" = now()
+              where id = :id
+              """,
+              Map.of("id", tripId));
+        });
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("ok", true);
+    result.put("postId", postId);
+    result.put("tripId", tripId);
     return result;
   }
 

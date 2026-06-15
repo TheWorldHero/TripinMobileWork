@@ -96,8 +96,9 @@ public class PointsService {
     return getPointView(userId, pointId);
   }
 
-  public Map<String, Object> getInbox(String userId) {
+  public Map<String, Object> getInbox(String userId, Integer rawLimit) {
     userService.ensureExists(userId);
+    int limit = rawLimit == null ? 100 : Math.max(1, Math.min(200, rawLimit));
     List<Map<String, Object>> rows =
         db.list(
             """
@@ -121,8 +122,9 @@ public class PointsService {
                 select 1 from "LinePoint" lp where lp."pointId" = p.id
               )
             order by p."createdAt" desc, p.id desc
+            limit :limit
             """,
-            Map.of("ownerId", userId));
+            Map.of("ownerId", userId, "limit", limit));
 
     List<Map<String, Object>> items = new ArrayList<>();
     for (Map<String, Object> row : rows) {

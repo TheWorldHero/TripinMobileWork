@@ -69,7 +69,7 @@ class PointsControllerTest {
     java.util.Map<String, Object> inbox = new java.util.LinkedHashMap<>();
     inbox.put("items", java.util.List.of());
     inbox.put("nextCursor", null);
-    when(pointsService.getInbox("demo-user")).thenReturn(inbox);
+    when(pointsService.getInbox(eq("demo-user"), any())).thenReturn(inbox);
 
     mockMvc
         .perform(get("/v1/points/inbox").header("x-user-id", "demo-user"))

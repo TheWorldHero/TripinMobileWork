@@ -12,6 +12,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class InteractionsService {
+  private static final int MAX_COMMENT_LENGTH = 2000;
+
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
@@ -66,9 +68,7 @@ public class InteractionsService {
 
   public Map<String, Object> createComment(String userId, String postId, CreateCommentRequest request) {
     ensurePostAndUser(userId, postId);
-    if (request == null || request.content() == null || request.content().isBlank()) {
-      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "content is required");
-    }
+    String content = validatedCommentContent(request);
 
     String commentId = json.newId("comment");
     db.update(
@@ -76,7 +76,7 @@ public class InteractionsService {
         insert into "Comment" (id, "postId", "userId", content)
         values (:id, :postId, :userId, :content)
         """,
-        Map.of("id", commentId, "postId", postId, "userId", userId, "content", request.content()));
+        Map.of("id", commentId, "postId", postId, "userId", userId, "content", content));
 
     Map<String, Object> user = userService.findRequired(userId);
     Map<String, Object> comment =
@@ -98,8 +98,9 @@ public class InteractionsService {
     return result;
   }
 
-  public List<Map<String, Object>> listComments(String postId) {
+  public List<Map<String, Object>> listComments(String postId, Integer rawLimit) {
     ensurePostExists(postId);
+    int limit = rawLimit == null ? 200 : Math.max(1, Math.min(500, rawLimit));
     return db.list(
             """
             select
@@ -115,11 +116,81 @@ public class InteractionsService {
             join "User" u on u.id = c."userId"
             where c."postId" = :postId
             order by c."createdAt" asc
+            limit :limit
             """,
-            Map.of("postId", postId))
+            Map.of("postId", postId, "limit", limit))
         .stream()
         .map(this::toComment)
         .toList();
+  }
+
+  public Map<String, Object> updateComment(
+      String userId, String postId, String commentId, CreateCommentRequest request) {
+    ensurePostAndUser(userId, postId);
+    String content = validatedCommentContent(request);
+
+    Map<String, Object> existing = findComment(postId, commentId);
+    if (!userId.equals(json.stringValue(existing.get("user_id")))) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the comment author can edit it");
+    }
+
+    db.update(
+        """
+        update "Comment"
+        set content = :content, "updatedAt" = now()
+        where id = :id
+        """,
+        Map.of("id", commentId, "content", content));
+
+    Map<String, Object> user = userService.findRequired(userId);
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("id", commentId);
+    result.put("content", content);
+    result.put("createdAt", json.instantValue(existing.get("created_at")));
+    result.put("user", userService.toSummary(user));
+    return result;
+  }
+
+  public Map<String, Object> deleteComment(String userId, String postId, String commentId) {
+    Map<String, Object> post = ensurePostAndUser(userId, postId);
+    Map<String, Object> existing = findComment(postId, commentId);
+
+    boolean isCommentAuthor = userId.equals(json.stringValue(existing.get("user_id")));
+    boolean isPostAuthor = userId.equals(json.stringValue(post.get("author_id")));
+    if (!isCommentAuthor && !isPostAuthor) {
+      throw new ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Only the comment author or the post author can delete it");
+    }
+
+    db.update("delete from \"Comment\" where id = :id", Map.of("id", commentId));
+    return getPostInteractionState(postId, userId);
+  }
+
+  private Map<String, Object> findComment(String postId, String commentId) {
+    Map<String, Object> row =
+        db.first(
+            """
+            select id, "userId" as user_id, "createdAt" as created_at
+            from "Comment"
+            where id = :id and "postId" = :postId
+            """,
+            Map.of("id", commentId, "postId", postId));
+    if (row == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Comment not found");
+    }
+    return row;
+  }
+
+  private String validatedCommentContent(CreateCommentRequest request) {
+    if (request == null || request.content() == null || request.content().isBlank()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "content is required");
+    }
+    String content = request.content().trim();
+    if (content.length() > MAX_COMMENT_LENGTH) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "content must be at most " + MAX_COMMENT_LENGTH + " characters");
+    }
+    return content;
   }
 
   private Map<String, Object> ensurePostAndUser(String userId, String postId) {
@@ -128,7 +199,10 @@ public class InteractionsService {
   }
 
   private Map<String, Object> ensurePostExists(String postId) {
-    Map<String, Object> post = db.first("select id from \"Post\" where id = :id", Map.of("id", postId));
+    Map<String, Object> post =
+        db.first(
+            "select id, \"authorId\" as author_id from \"Post\" where id = :id",
+            Map.of("id", postId));
     if (post == null) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found");
     }

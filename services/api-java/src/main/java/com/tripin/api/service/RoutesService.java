@@ -13,6 +13,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,7 +31,8 @@ public class RoutesService {
   private final UserService userService;
   private final TransactionTemplate transactionTemplate;
   private final ObjectMapper objectMapper;
-  private final HttpClient httpClient = HttpClient.newHttpClient();
+  private final HttpClient httpClient =
+      HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
   private final String amapKey;
 
   public RoutesService(
@@ -215,7 +217,7 @@ public class RoutesService {
     try {
       HttpResponse<String> response =
           httpClient.send(
-              HttpRequest.newBuilder(URI.create(url)).GET().build(),
+              HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(8)).GET().build(),
               HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
       if (response.statusCode() >= 400) {
         throw new ResponseStatusException(

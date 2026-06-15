@@ -16,9 +16,7 @@
   ViewerInteractionState,
 } from '../types';
 import { getSessionUserId } from './session';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001/api/v1';
+import { API_BASE_URL } from './config';
 
 type RequestOptions = RequestInit & {
   allowNotFound?: boolean;
@@ -572,6 +570,25 @@ function normalizePlaceCandidate(place: RawPlaceCandidate): PlaceCandidate {
   };
 }
 
+/** 有并发上限的并行 map：避免首页一次性对所有帖子发起 /posts 请求打满后端。 */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await fn(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export const api = {
   async getCurrentUser(): Promise<UserSummary> {
     const response = await request<UserSummary>('/users/me');
@@ -587,8 +604,22 @@ export const api = {
       nextCursor?: string | null;
       mode?: string | null;
     }>('/feed');
+    const items = (response?.items ?? []).map(normalizeFeedItem);
+    // 首页内嵌画廊 + 地图联动需要每个点位的照片：按帖子并行补全 points。
+    // 有并发上限地补全（每批 5），避免首屏一次性扇出过多请求打满后端。
+    const enriched = await mapWithConcurrency(items, 5, async (item) => {
+      try {
+        const post = await request<RawPostResponse>(`/posts/${item.id}`, { allowNotFound: true });
+        if (post) {
+          return { ...item, points: normalizePostDetail(post).points };
+        }
+      } catch {
+        // 单个帖子详情失败不影响整列：该卡片回退到封面图 / 路线小图。
+      }
+      return item;
+    });
     return {
-      items: (response?.items ?? []).map(normalizeFeedItem),
+      items: enriched,
       nextCursor: response?.nextCursor ?? null,
       mode: response?.mode ?? null,
     };
@@ -1128,6 +1159,41 @@ export const api = {
     });
     if (!response) {
       throw new Error('Failed to create comment.');
+    }
+    return response;
+  },
+
+  async deleteComment(
+    postId: string,
+    commentId: string,
+  ): Promise<{ counts: RouteCounts; viewerState: ViewerInteractionState }> {
+    const response = await request<{ counts: RouteCounts; viewerState: ViewerInteractionState }>(
+      `/posts/${postId}/comments/${commentId}`,
+      { method: 'DELETE' },
+    );
+    if (!response) {
+      throw new Error('Failed to delete comment.');
+    }
+    return response;
+  },
+
+  async deletePost(postId: string): Promise<{ ok: boolean; postId: string; tripId?: string | null }> {
+    const response = await request<{ ok: boolean; postId: string; tripId?: string | null }>(
+      `/posts/${postId}`,
+      { method: 'DELETE' },
+    );
+    if (!response) {
+      throw new Error('Failed to delete post.');
+    }
+    return response;
+  },
+
+  async deleteTrip(tripId: string): Promise<{ ok: boolean; tripId: string }> {
+    const response = await request<{ ok: boolean; tripId: string }>(`/trips/${tripId}`, {
+      method: 'DELETE',
+    });
+    if (!response) {
+      throw new Error('Failed to delete trip.');
     }
     return response;
   },

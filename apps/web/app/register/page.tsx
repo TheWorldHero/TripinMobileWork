@@ -1,7 +1,7 @@
-import { AuthForm } from '../../src/components/AuthForm';
+import { AuthScreen } from '../../src/components/auth/AuthScreen';
 
 export const dynamic = 'force-dynamic';
 
 export default function RegisterPage() {
-  return <AuthForm mode="register" />;
+  return <AuthScreen mode="register" />;
 }

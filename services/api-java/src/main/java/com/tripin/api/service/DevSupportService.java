@@ -543,6 +543,12 @@ public class DevSupportService {
         39.882245,
         116.406605);
     upsertMedia(
+        "media-temple-2",
+        "The echo wall before the crowds arrive.",
+        "2026-04-04T23:52:00Z",
+        39.882245,
+        116.406605);
+    upsertMedia(
         "media-qianmen-1",
         "Lunch and a walk through the street after noon.",
         "2026-04-05T05:10:00Z",
@@ -552,6 +558,12 @@ public class DevSupportService {
         "media-shichahai-1",
         "The lake in late afternoon is the calmest moment of the day.",
         "2026-04-05T10:35:00Z",
+        39.948698,
+        116.379151);
+    upsertMedia(
+        "media-shichahai-2",
+        "Rooftops across the water as the light goes down.",
+        "2026-04-05T11:02:00Z",
         39.948698,
         116.379151);
     upsertMedia(
@@ -578,12 +590,14 @@ public class DevSupportService {
           "exifLatitude", "exifLongitude", status
         )
         values (
-          :id, 'creator-li', 'trip-beijing-spring-weekend', 'demo/' || :id || '.jpg', 'tripin-media',
+          :id, 'creator-li', 'trip-beijing-spring-weekend',
+          'https://picsum.photos/seed/' || :id || '/1080/810', 'tripin-media',
           :id || '.jpg', 'image/jpeg', 2400000, 1440, 1080, :caption,
           cast(:takenAt as timestamptz), :latitude, :longitude, cast('READY' as "MediaStatus")
         )
         on conflict (id) do update set
           "tripId" = excluded."tripId",
+          "storageKey" = excluded."storageKey",
           caption = excluded.caption,
           "takenAt" = excluded."takenAt",
           "exifLatitude" = excluded."exifLatitude",
@@ -639,6 +653,23 @@ public class DevSupportService {
         116.497512,
         4,
         "media-798-1");
+
+    // Second photos for two stops, so the gallery <-> map sync is visible in demos.
+    attachExtraMedia("point-temple", "media-temple-2", 2);
+    attachExtraMedia("point-shichahai", "media-shichahai-2", 2);
+  }
+
+  private void attachExtraMedia(String pointId, String mediaId, int pointMediaCount) {
+    db.update(
+        """
+        update "MediaAsset"
+        set "tripId" = 'trip-beijing-spring-weekend', "tripPointId" = :pointId, "updatedAt" = now()
+        where id = :mediaId
+        """,
+        Map.of("pointId", pointId, "mediaId", mediaId));
+    db.update(
+        "update \"TripPoint\" set \"mediaCount\" = :count, \"updatedAt\" = now() where id = :id",
+        Map.of("count", pointMediaCount, "id", pointId));
   }
 
   private void upsertPoint(
@@ -716,7 +747,7 @@ public class DevSupportService {
         set
           "coverMediaId" = 'media-temple-1',
           "pointCount" = 4,
-          "mediaCount" = 4,
+          "mediaCount" = 6,
           "routePreview" = cast(:routePreview as jsonb),
           "startedAt" = cast('2026-04-04T23:00:00Z' as timestamptz),
           "endedAt" = cast('2026-04-06T09:30:00Z' as timestamptz),
@@ -743,7 +774,7 @@ public class DevSupportService {
           'Beijing',
           'media-temple-1',
           4,
-          4,
+          6,
           cast('ACTIVE' as "PostStatus"),
           cast('PUBLIC' as "Visibility"),
           cast('2026-04-06T12:00:00Z' as timestamptz)

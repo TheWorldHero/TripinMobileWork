@@ -39,6 +39,8 @@ export interface FeedItem {
   author: UserSummary;
   coverMedia?: MediaAsset | null;
   viewerState?: ViewerInteractionState | null;
+  /** 每个点位及其用户照片，用于首页 feed 内嵌画廊与地图联动（web 层按帖子补全）。 */
+  points?: RoutePoint[];
   trip: {
     id: string;
     title: string;

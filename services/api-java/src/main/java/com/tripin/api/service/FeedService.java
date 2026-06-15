@@ -6,10 +6,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class FeedService {
+  private static final Logger log = LoggerFactory.getLogger(FeedService.class);
+
   private final DbSupport db;
   private final JsonSupport json;
   private final UserService userService;
@@ -41,8 +45,13 @@ public class FeedService {
                 "postId", row.get("id"),
                 "source", "home_feed",
                 "position", index));
-      } catch (Exception ignored) {
+      } catch (Exception exception) {
         // Feed rendering should not fail because impression logging failed.
+        log.warn(
+            "Failed to record feed impression for post {} (user {}): {}",
+            row.get("id"),
+            userId,
+            exception.getMessage());
       }
     }
 

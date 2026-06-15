@@ -1,4 +1,4 @@
-import { FavoritesPage } from '../../src/components/FavoritesPage';
+import { FavoritesScreen } from '../../src/components/profile/FavoritesScreen';
 import { api } from '../../src/lib/api';
 import { requireSessionUserId } from '../../src/lib/session';
 
@@ -9,5 +9,5 @@ export default async function FavoritesRoutePage() {
   const user = await api.getCurrentUser();
   const items = await api.getUserSavedPosts(user.id);
 
-  return <FavoritesPage initialItems={items} />;
+  return <FavoritesScreen initialItems={items} />;
 }

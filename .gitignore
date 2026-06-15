@@ -37,3 +37,5 @@ apps/mobile/android/
 apps/mobile/ios/
 .superpowers/
 services/api-java/src/main/resources/application-local.properties
+.codex-run/
+*.reg

@@ -1,10 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Image,
   LogBox,
   Modal,
@@ -21,11 +23,10 @@ import {
 import { RoutePreview } from '../components/RoutePreview';
 import { createApiClient } from '../lib/api';
 import { TripinMapView } from '../native/TripinMapView';
-import type { FeedItem, MediaAsset, PostDetail, Trip, TripPoint, UserSummary } from '../types';
+import type { CommentItem, FeedItem, MediaAsset, PostDetail, Trip, TripPoint, UserSummary } from '../types';
 
-const API_BASE_URL =
-  Platform.OS === 'android' ? 'http://10.0.2.2:3001/api/v1' : 'http://localhost:3001/api/v1';
-const WEB_BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+const API_BASE_URL = 'http://localhost:3001/api/v1';
+const WEB_BASE_URL = 'http://localhost:3000';
 const USER_ID = 'demo-user';
 
 type TabKey = 'record' | 'home' | 'studio' | 'me';
@@ -77,6 +78,168 @@ const initialForm: DraftForm = {
   pointTitle: '',
   pointNote: '',
   startedAt: new Date().toISOString().slice(0, 16),
+};
+
+const MOCK_FEED_ITEMS: FeedItem[] = [
+  {
+    id: 'mock-post-suzhou-morning',
+    title: '苏州河边的蓝调散步',
+    summary: '从咖啡店走到桥下，三段停留刚好连成一条适合傍晚复走的路线。',
+    cityName: '上海',
+    pointCount: 4,
+    mediaCount: 6,
+    publishedAt: '2026-04-28T08:42:00.000Z',
+    author: {
+      id: 'mock-user-luna',
+      username: 'luna.routes',
+      displayName: 'Luna Chen',
+      bio: 'city walker',
+    },
+    viewerState: { liked: true, saved: false },
+    trip: {
+      id: 'mock-trip-suzhou-morning',
+      title: '苏州河边的蓝调散步',
+      kind: 'LIFESTYLE',
+      startedAt: '2026-04-28T08:10:00.000Z',
+      endedAt: '2026-04-28T10:05:00.000Z',
+      routePreview: [
+        { pointId: 'mock-sz-1', sequence: 1, latitude: 31.2427, longitude: 121.4381 },
+        { pointId: 'mock-sz-2', sequence: 2, latitude: 31.2442, longitude: 121.4478 },
+        { pointId: 'mock-sz-3', sequence: 3, latitude: 31.2409, longitude: 121.4561 },
+        { pointId: 'mock-sz-4', sequence: 4, latitude: 31.2368, longitude: 121.4635 },
+      ],
+    },
+    _count: { likes: 328, saves: 42, comments: 2 },
+  },
+  {
+    id: 'mock-post-xihu-rain',
+    title: '雨后西湖，绕开人群的三站',
+    summary: '不是景点清单，是一条从安静巷口到湖边长椅的路线。',
+    cityName: '杭州',
+    pointCount: 3,
+    mediaCount: 4,
+    publishedAt: '2026-04-27T15:18:00.000Z',
+    author: {
+      id: 'mock-user-neo',
+      username: 'neo.walks',
+      displayName: 'Neo Zhang',
+      bio: 'weekend routes',
+    },
+    viewerState: { liked: false, saved: true },
+    trip: {
+      id: 'mock-trip-xihu-rain',
+      title: '雨后西湖，绕开人群的三站',
+      kind: 'TRAVEL',
+      startedAt: '2026-04-27T14:20:00.000Z',
+      endedAt: '2026-04-27T17:00:00.000Z',
+      routePreview: [
+        { pointId: 'mock-xh-1', sequence: 1, latitude: 30.2475, longitude: 120.1468 },
+        { pointId: 'mock-xh-2', sequence: 2, latitude: 30.2526, longitude: 120.1432 },
+        { pointId: 'mock-xh-3', sequence: 3, latitude: 30.2584, longitude: 120.1497 },
+      ],
+    },
+    _count: { likes: 516, saves: 91, comments: 1 },
+  },
+  {
+    id: 'mock-post-chengdu-night',
+    title: '成都夜骑：从小酒馆到河边风',
+    summary: '四个点位串起夜里的亮色，适合收藏给下一次短途骑行。',
+    cityName: '成都',
+    pointCount: 5,
+    mediaCount: 8,
+    publishedAt: '2026-04-26T21:36:00.000Z',
+    author: {
+      id: 'mock-user-mika',
+      username: 'mika.moves',
+      displayName: 'Mika Li',
+      bio: 'night ride notes',
+    },
+    viewerState: { liked: false, saved: false },
+    trip: {
+      id: 'mock-trip-chengdu-night',
+      title: '成都夜骑：从小酒馆到河边风',
+      kind: 'MIXED',
+      startedAt: '2026-04-26T19:30:00.000Z',
+      endedAt: '2026-04-26T22:15:00.000Z',
+      routePreview: [
+        { pointId: 'mock-cd-1', sequence: 1, latitude: 30.6539, longitude: 104.0605 },
+        { pointId: 'mock-cd-2', sequence: 2, latitude: 30.6572, longitude: 104.0712 },
+        { pointId: 'mock-cd-3', sequence: 3, latitude: 30.6636, longitude: 104.0785 },
+        { pointId: 'mock-cd-4', sequence: 4, latitude: 30.6681, longitude: 104.0862 },
+        { pointId: 'mock-cd-5', sequence: 5, latitude: 30.6724, longitude: 104.0941 },
+      ],
+    },
+    _count: { likes: 782, saves: 134, comments: 2 },
+  },
+];
+
+const MOCK_COMMENTS_BY_POST_ID: Record<string, CommentItem[]> = {
+  'mock-post-suzhou-morning': [
+    {
+      id: 'mock-comment-suzhou-1',
+      content: '这个路线图很清楚，第二个点适合停下来拍照。',
+      createdAt: '2026-04-28T09:02:00.000Z',
+      user: { id: 'mock-user-iris', username: 'iris.walks', displayName: 'Iris' },
+    },
+    {
+      id: 'mock-comment-suzhou-2',
+      content: '收藏了，傍晚去复走。',
+      createdAt: '2026-04-28T09:20:00.000Z',
+      user: { id: 'mock-user-kai', username: 'kai.city', displayName: 'Kai' },
+    },
+  ],
+  'mock-post-xihu-rain': [
+    {
+      id: 'mock-comment-xihu-1',
+      content: '雨后这条线比主路舒服很多。',
+      createdAt: '2026-04-27T16:01:00.000Z',
+      user: { id: 'mock-user-yu', username: 'yu.notes', displayName: 'Yu' },
+    },
+  ],
+  'mock-post-chengdu-night': [
+    {
+      id: 'mock-comment-chengdu-1',
+      content: '夜骑路线需要这个点位切图功能。',
+      createdAt: '2026-04-26T22:06:00.000Z',
+      user: { id: 'mock-user-river', username: 'river.route', displayName: 'River' },
+    },
+    {
+      id: 'mock-comment-chengdu-2',
+      content: '终点放河边很合理。',
+      createdAt: '2026-04-26T22:18:00.000Z',
+      user: { id: 'mock-user-min', username: 'min.trips', displayName: 'Min' },
+    },
+  ],
+};
+
+const MOCK_POINT_TITLES: Record<string, string> = {
+  'mock-sz-1': '河边咖啡店',
+  'mock-sz-2': '苏州河桥下',
+  'mock-sz-3': '安静街角',
+  'mock-sz-4': '傍晚终点',
+  'mock-xh-1': '巷口出发',
+  'mock-xh-2': '湖边长椅',
+  'mock-xh-3': '雨后终点',
+  'mock-cd-1': '小酒馆',
+  'mock-cd-2': '夜市路口',
+  'mock-cd-3': '桥边停靠',
+  'mock-cd-4': '河岸骑行',
+  'mock-cd-5': '终点风口',
+};
+
+const MOCK_POINT_IMAGE_URLS: Record<string, string> = {
+  'mock-sz-1': 'https://images.unsplash.com/photo-1494526585095-c41746248156?auto=format&fit=crop&w=1200&q=80',
+  'mock-sz-2': 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=80',
+  'mock-sz-3': 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1200&q=80',
+  'mock-sz-4': 'https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=1200&q=80',
+  'mock-xh-1': 'https://images.unsplash.com/photo-1526772662000-3f88f10405ff?auto=format&fit=crop&w=1200&q=80',
+  'mock-xh-2': 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1200&q=80',
+  'mock-xh-3': 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80',
+  'mock-cd-1': 'https://images.unsplash.com/photo-1519501025264-65ba15a82390?auto=format&fit=crop&w=1200&q=80',
+  'mock-cd-2': 'https://images.unsplash.com/photo-1493246507139-91e8fad9978e?auto=format&fit=crop&w=1200&q=80',
+  'mock-cd-3': 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1200&q=80',
+  'mock-cd-4': 'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=1200&q=80',
+  'mock-cd-5': 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1200&q=80',
 };
 
 const initialPointEditForm: PointEditForm = {
@@ -197,7 +360,94 @@ function mediaUri(media?: MediaAsset | null) {
   if (media.storageKey.startsWith('/')) {
     return `${WEB_BASE_URL}${media.storageKey}`;
   }
-  return null;
+  return `${WEB_BASE_URL}/${media.storageKey}`;
+}
+
+function isMockPostId(postId: string) {
+  return postId.startsWith('mock-post-');
+}
+
+function mockMediaAsset(pointId: string, index: number, title: string, latitude: number, longitude: number): MediaAsset {
+  return {
+    id: `mock-media-${pointId}`,
+    originalName: `${pointId}.jpg`,
+    caption: title,
+    takenAt: new Date(Date.UTC(2026, 3, 26 + index, 8, index * 7)).toISOString(),
+    storageKey: MOCK_POINT_IMAGE_URLS[pointId] ?? MOCK_POINT_IMAGE_URLS['mock-sz-1'],
+    bucket: 'mock-route-media',
+    status: 'READY',
+    mimeType: 'image/jpeg',
+    width: 1200,
+    height: 1600,
+    exifLatitude: latitude,
+    exifLongitude: longitude,
+  };
+}
+
+function createMockPostDetail(post: FeedItem, comments: CommentItem[]): PostDetail {
+  const routePreview = post.trip.routePreview ?? [];
+  const points: TripPoint[] = routePreview.map((point, index) => {
+    const title = MOCK_POINT_TITLES[point.pointId] ?? `${post.cityName ?? '路线'}点位 ${index + 1}`;
+    return {
+      id: point.pointId,
+      title,
+      note: index === 0 ? '从这里开始记录路线。' : index === routePreview.length - 1 ? '路线终点。' : '中途停留点。',
+      customPlaceName: title,
+      startedAt: new Date(Date.UTC(2026, 3, 26 + index, 8, index * 7)).toISOString(),
+      latitude: point.latitude,
+      longitude: point.longitude,
+      sequence: point.sequence,
+      sourceType: 'MANUAL',
+      mediaCount: 1,
+      place: {
+        id: `mock-place-${point.pointId}`,
+        name: title,
+        cityName: post.cityName,
+        latitude: point.latitude,
+        longitude: point.longitude,
+      },
+      mediaAssets: [mockMediaAsset(point.pointId, index, title, point.latitude, point.longitude)],
+    };
+  });
+  const coverMedia = points[0]?.mediaAssets[0] ?? null;
+
+  return {
+    id: post.id,
+    title: post.title,
+    summary: post.summary,
+    cityName: post.cityName,
+    publishedAt: post.publishedAt,
+    pointCount: post.pointCount,
+    mediaCount: post.mediaCount,
+    author: post.author,
+    coverMedia,
+    viewerState: post.viewerState,
+    trip: {
+      id: post.trip.id,
+      title: post.trip.title,
+      summary: post.summary,
+      kind: post.trip.kind,
+      status: 'PUBLISHED',
+      visibility: 'PUBLIC',
+      cityName: post.cityName,
+      provinceName: post.cityName,
+      coverMediaId: coverMedia?.id,
+      pointCount: post.pointCount,
+      mediaCount: post.mediaCount,
+      startedAt: post.trip.startedAt,
+      endedAt: post.trip.endedAt,
+      routePreview,
+      points,
+      coverMedia,
+      post: { id: post.id },
+    },
+    comments,
+    counts: {
+      likes: post._count.likes,
+      saves: post._count.saves,
+      comments: comments.length,
+    },
+  };
 }
 
 function collectTripImageEntries(trip?: Trip | null) {
@@ -317,7 +567,11 @@ export default function AppRoot() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [currentUser, setCurrentUser] = useState<UserSummary | null>(null);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
+  const [mockFeedItems, setMockFeedItems] = useState<FeedItem[]>(MOCK_FEED_ITEMS);
+  const [mockCommentsByPostId, setMockCommentsByPostId] =
+    useState<Record<string, CommentItem[]>>(MOCK_COMMENTS_BY_POST_ID);
   const [postDetails, setPostDetails] = useState<Record<string, PostDetail>>({});
+  const [selectedPointByPostId, setSelectedPointByPostId] = useState<Record<string, string>>({});
   const [feedCommentTexts, setFeedCommentTexts] = useState<Record<string, string>>({});
   const [savedItems, setSavedItems] = useState<FeedItem[]>([]);
   const [publishedItems, setPublishedItems] = useState<FeedItem[]>([]);
@@ -343,6 +597,14 @@ export default function AppRoot() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
+  const mockPostDetails = useMemo(
+    () =>
+      mockFeedItems.reduce<Record<string, PostDetail>>((details, item) => {
+        details[item.id] = createMockPostDetail(item, mockCommentsByPostId[item.id] ?? []);
+        return details;
+      }, {}),
+    [mockFeedItems, mockCommentsByPostId],
+  );
 
   useEffect(() => {
     LogBox.ignoreAllLogs(true);
@@ -358,6 +620,28 @@ export default function AppRoot() {
 
     return () => clearTimeout(timeout);
   }, [message]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (selectedPost) {
+        setSelectedPost(null);
+        return true;
+      }
+
+      if (activeTab !== 'home') {
+        setSelectedPost(null);
+        setMePanel('overview');
+        setActiveTab('home');
+        return true;
+      }
+
+      return false;
+    });
+
+    return () => subscription.remove();
+  }, [activeTab, selectedPost]);
 
   function goHome() {
     setSelectedPost(null);
@@ -787,7 +1071,39 @@ export default function AppRoot() {
     });
   }
 
+  function updateMockPost(postId: string, updater: (item: FeedItem) => FeedItem) {
+    setMockFeedItems((items) => items.map((item) => (item.id === postId ? updater(item) : item)));
+    setSelectedPost((current) => (current?.id === postId ? updater(current) : current));
+  }
+
+  function createLocalComment(content: string): CommentItem {
+    return {
+      id: `local-comment-${Date.now()}`,
+      content,
+      createdAt: new Date().toISOString(),
+      user: currentUser ?? { id: USER_ID, username: 'demo', displayName: 'Demo User' },
+    };
+  }
+
   function handleToggleLike(postId: string) {
+    if (isMockPostId(postId)) {
+      updateMockPost(postId, (item) => {
+        const liked = item.viewerState?.liked ?? false;
+        return {
+          ...item,
+          _count: {
+            ...item._count,
+            likes: Math.max(0, item._count.likes + (liked ? -1 : 1)),
+          },
+          viewerState: {
+            ...(item.viewerState ?? {}),
+            liked: !liked,
+          },
+        };
+      });
+      return;
+    }
+
     const detail = postDetails[postId];
     const feedItem = feedItems.find((item) => item.id === postId);
     const liked = detail?.viewerState?.liked ?? feedItem?.viewerState?.liked ?? false;
@@ -799,6 +1115,24 @@ export default function AppRoot() {
   }
 
   function handleToggleSave(postId: string) {
+    if (isMockPostId(postId)) {
+      updateMockPost(postId, (item) => {
+        const saved = item.viewerState?.saved ?? false;
+        return {
+          ...item,
+          _count: {
+            ...item._count,
+            saves: Math.max(0, item._count.saves + (saved ? -1 : 1)),
+          },
+          viewerState: {
+            ...(item.viewerState ?? {}),
+            saved: !saved,
+          },
+        };
+      });
+      return;
+    }
+
     const detail = postDetails[postId];
     const feedItem =
       feedItems.find((item) => item.id === postId) ??
@@ -824,6 +1158,25 @@ export default function AppRoot() {
     const content = commentText.trim();
     if (!content) {
       setMessage('先输入评论内容。');
+      return;
+    }
+
+    if (isMockPostId(postId)) {
+      const comment = createLocalComment(content);
+      setMockCommentsByPostId((current) => ({
+        ...current,
+        [postId]: [...(current[postId] ?? []), comment],
+      }));
+      updateMockPost(postId, (item) => ({
+        ...item,
+        _count: {
+          ...item._count,
+          comments: item._count.comments + 1,
+        },
+      }));
+      setCommentText('');
+      setExpandedComments((current) => ({ ...current, [postId]: true }));
+      setMessage('评论已发布。');
       return;
     }
 
@@ -861,6 +1214,24 @@ export default function AppRoot() {
     const content = (feedCommentTexts[postId] ?? '').trim();
     if (!content) {
       setMessage('先输入评论内容。');
+      return;
+    }
+
+    if (isMockPostId(postId)) {
+      const comment = createLocalComment(content);
+      setMockCommentsByPostId((current) => ({
+        ...current,
+        [postId]: [...(current[postId] ?? []), comment],
+      }));
+      updateMockPost(postId, (item) => ({
+        ...item,
+        _count: {
+          ...item._count,
+          comments: item._count.comments + 1,
+        },
+      }));
+      setFeedCommentTexts((current) => ({ ...current, [postId]: '' }));
+      setMessage('评论已发布。');
       return;
     }
 
@@ -936,14 +1307,14 @@ export default function AppRoot() {
 
   function renderHome() {
     if (selectedPost) {
+      const selectedDetail = postDetails[selectedPost.id] ?? mockPostDetails[selectedPost.id];
       return (
         <ScrollView contentContainerStyle={styles.screenContent}>
           <PostDetailView
             post={selectedPost}
-            detail={postDetails[selectedPost.id]}
+            detail={selectedDetail}
             commentText={commentText}
             commentsExpanded={Boolean(expandedComments[selectedPost.id])}
-            onBack={() => setSelectedPost(null)}
             onChangeCommentText={setCommentText}
             onToggleComments={() =>
               setExpandedComments((current) => ({
@@ -954,24 +1325,33 @@ export default function AppRoot() {
             onToggleLike={() => handleToggleLike(selectedPost.id)}
             onToggleSave={() => handleToggleSave(selectedPost.id)}
             onCreateComment={() => handleCreateComment(selectedPost.id)}
+            selectedPointId={selectedPointByPostId[selectedPost.id]}
+            onSelectPoint={(pointId) =>
+              setSelectedPointByPostId((current) => ({ ...current, [selectedPost.id]: pointId }))
+            }
           />
         </ScrollView>
       );
     }
 
+    const displayFeedItems = feedItems.length ? [...mockFeedItems, ...feedItems] : mockFeedItems;
+
     return (
-      <ScrollView contentContainerStyle={styles.screenContent}>
-        <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>TripIn</Text>
-          <Text style={styles.pageSubtitle}>发现真实地点组成的生活路线</Text>
+      <ScrollView contentContainerStyle={styles.feedContent}>
+        <View style={styles.feedHeader}>
+          <View>
+            <Text style={styles.feedBrand}>TripIn</Text>
+            <Text style={styles.feedSubtitle}>朋友正在分享今天走过的路线</Text>
+          </View>
+          <LinearGradient colors={['#0ea5e9', '#1d4ed8']} style={styles.headerGradientButton}>
+            <Text style={styles.headerGradientText}>发布</Text>
+          </LinearGradient>
         </View>
-        <AppCover />
-        {feedItems.length ? (
-          feedItems.map((item) => (
+        {displayFeedItems.map((item) => (
             <PostCard
               key={item.id}
               post={item}
-              detail={postDetails[item.id]}
+              detail={postDetails[item.id] ?? mockPostDetails[item.id]}
               commentText={feedCommentTexts[item.id] ?? ''}
               onOpen={() => setSelectedPost(item)}
               onToggleLike={() => handleToggleLike(item.id)}
@@ -980,11 +1360,12 @@ export default function AppRoot() {
                 setFeedCommentTexts((current) => ({ ...current, [item.id]: value }))
               }
               onCreateComment={() => handleCreateFeedComment(item.id)}
+              selectedPointId={selectedPointByPostId[item.id]}
+              onSelectPoint={(pointId) =>
+                setSelectedPointByPostId((current) => ({ ...current, [item.id]: pointId }))
+              }
             />
-          ))
-        ) : (
-          <EmptyMessage title="暂无内容发布" description="发布第一条路线后，这里会出现作品流。" />
-        )}
+          ))}
       </ScrollView>
     );
   }
@@ -1258,7 +1639,7 @@ export default function AppRoot() {
       <View style={styles.bottomBar}>
         <TabButton label="即时记录" active={activeTab === 'record'} onPress={() => setRecordOpen(true)} />
         <Pressable
-          style={[styles.plusButton, activeTab === 'studio' ? styles.homeButton : null]}
+          style={styles.plusButtonShell}
           hitSlop={18}
           onPressIn={() => {
             if (activeTab === 'studio') {
@@ -1270,9 +1651,16 @@ export default function AppRoot() {
             }
           }}
         >
-          <Text style={[styles.plusText, activeTab === 'studio' ? styles.homeButtonText : null]}>
-            {activeTab === 'studio' ? '首页' : '＋'}
-          </Text>
+          <LinearGradient
+            colors={activeTab === 'studio' ? ['#1d4ed8', '#0ea5e9'] : ['#0ea5e9', '#2563eb']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.plusButton, activeTab === 'studio' ? styles.homeButton : null]}
+          >
+            <Text style={[styles.plusText, activeTab === 'studio' ? styles.homeButtonText : null]}>
+              {activeTab === 'studio' ? '首页' : '＋'}
+            </Text>
+          </LinearGradient>
         </Pressable>
         <TabButton label="个人信息" active={activeTab === 'me'} onPress={() => setActiveTab('me')} />
       </View>
@@ -1473,41 +1861,31 @@ function BackButton({ label, onPress }: { label: string; onPress: () => void }) 
   );
 }
 
-function AppCover() {
+function GeneratedRouteCover({
+  title,
+  cityName,
+  activePointLabel,
+  compact = false,
+}: {
+  title: string;
+  cityName?: string | null;
+  activePointLabel?: string | null;
+  compact?: boolean;
+}) {
   return (
-    <View style={styles.appCover}>
-      <View style={styles.coverMapLine}>
-        <View style={[styles.coverDot, styles.coverDotStart]}>
-          <Text style={styles.coverDotText}>起</Text>
-        </View>
-        <View style={[styles.coverDot, styles.coverDotMid]}>
-          <Text style={styles.coverDotText}>2</Text>
-        </View>
-        <View style={[styles.coverDot, styles.coverDotEnd]}>
-          <Text style={styles.coverDotText}>终</Text>
-        </View>
-      </View>
-      <View style={styles.coverCopy}>
-        <Text style={styles.coverKicker}>TripIn Route Journal</Text>
-        <Text style={styles.coverTitle}>把路上的点，连成一段可分享的生活路线。</Text>
-      </View>
-    </View>
-  );
-}
-
-function GeneratedRouteCover({ title, cityName }: { title: string; cityName?: string | null }) {
-  return (
-    <View style={styles.generatedCover}>
-      <View style={styles.generatedCoverLine} />
-      <View style={[styles.generatedCoverPin, styles.generatedCoverPinStart]}>
-        <Text style={styles.generatedCoverPinText}>1</Text>
-      </View>
-      <View style={[styles.generatedCoverPin, styles.generatedCoverPinEnd]}>
-        <Text style={styles.generatedCoverPinText}>终</Text>
-      </View>
-      <Text style={styles.generatedCoverKicker}>{cityName || 'TripIn 路线封面'}</Text>
+    <LinearGradient
+      colors={['#dbeafe', '#60a5fa', '#1d4ed8']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={[styles.generatedCover, compact ? styles.generatedCoverCompact : null]}
+    >
+      <View style={styles.generatedPhotoNoise} />
+      <Text style={styles.generatedCoverKicker}>{cityName || 'TripIn route'}</Text>
       <Text style={styles.generatedCoverTitle}>{title || '未命名路线'}</Text>
-    </View>
+      <View style={styles.generatedCoverMeta}>
+        <Text style={styles.generatedCoverMetaText}>{activePointLabel ?? '选择路线点查看对应图片'}</Text>
+      </View>
+    </LinearGradient>
   );
 }
 
@@ -1517,19 +1895,37 @@ function RouteMediaViewer({
   title,
   cityName,
   compact = false,
+  selectedPointId: cachedSelectedPointId,
+  onSelectPoint,
 }: {
   trip?: Trip | null;
   route: NonNullable<Trip['routePreview']>;
   title: string;
   cityName?: string | null;
   compact?: boolean;
+  selectedPointId?: string | null;
+  onSelectPoint?: (pointId: string) => void;
 }) {
   const imageEntries = collectTripImageEntries(trip);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const safeImageIndex = imageEntries.length ? Math.min(activeImageIndex, imageEntries.length - 1) : 0;
   const activeImage = imageEntries[safeImageIndex];
-  const activePointId = selectedPointId ?? activeImage?.pointId ?? route[0]?.pointId ?? null;
+  const activePointId = cachedSelectedPointId ?? selectedPointId ?? activeImage?.pointId ?? route[0]?.pointId ?? null;
+  const activeRoutePoint = activePointId ? route.find((point) => point.pointId === activePointId) : null;
+  const activeTripPoint = activePointId ? trip?.points.find((point) => point.id === activePointId) : null;
+  const activePointLabel =
+    activeTripPoint?.title ??
+    activeTripPoint?.customPlaceName ??
+    (activeRoutePoint ? `点位 ${activeRoutePoint.sequence}` : null);
+
+  useEffect(() => {
+    if (!cachedSelectedPointId || !imageEntries.length) return;
+    const selectedImageIndex = imageEntries.findIndex((entry) => entry.pointId === cachedSelectedPointId);
+    if (selectedImageIndex >= 0 && selectedImageIndex !== activeImageIndex) {
+      setActiveImageIndex(selectedImageIndex);
+    }
+  }, [activeImageIndex, cachedSelectedPointId, imageEntries]);
 
   function showImage(nextIndex: number) {
     if (!imageEntries.length) return;
@@ -1537,10 +1933,12 @@ function RouteMediaViewer({
     const nextImage = imageEntries[normalizedIndex];
     setActiveImageIndex(normalizedIndex);
     setSelectedPointId(nextImage.pointId);
+    onSelectPoint?.(nextImage.pointId);
   }
 
   function handlePointPress(pointId: string) {
     setSelectedPointId(pointId);
+    onSelectPoint?.(pointId);
     const firstImageIndex = imageEntries.findIndex((entry) => entry.pointId === pointId);
     if (firstImageIndex >= 0) {
       setActiveImageIndex(firstImageIndex);
@@ -1549,15 +1947,9 @@ function RouteMediaViewer({
 
   return (
     <View style={styles.routeMediaViewer}>
-      <RoutePreview
-        points={route}
-        height={compact ? 86 : 110}
-        selectedPointId={activePointId}
-        onPointPress={handlePointPress}
-      />
-      {activeImage ? (
-        <View style={[styles.viewerImageFrame, compact ? styles.viewerImageFrameCompact : null]}>
-          <Image source={{ uri: activeImage.uri }} style={styles.viewerImage} />
+        {activeImage ? (
+          <View style={[styles.viewerImageFrame, compact ? styles.viewerImageFrameCompact : null]}>
+            <Image source={{ uri: activeImage.uri }} style={styles.viewerImage} />
           {imageEntries.length > 1 ? (
             <>
               <Pressable
@@ -1583,8 +1975,26 @@ function RouteMediaViewer({
           </View>
         </View>
       ) : (
-        <GeneratedRouteCover title={title} cityName={cityName} />
+        <GeneratedRouteCover
+          title={title}
+          cityName={cityName}
+          activePointLabel={activePointLabel}
+          compact={compact}
+        />
       )}
+      <View style={styles.viewerRoutePanel}>
+        <View style={styles.viewerRouteHeader}>
+          <Text style={styles.viewerRouteTitle}>路线图</Text>
+          <Text style={styles.viewerRouteHint}>{activePointLabel ? `当前：${activePointLabel}` : '点击点位切换图片'}</Text>
+        </View>
+        <RoutePreview
+          points={route}
+          height={compact ? 132 : 168}
+          selectedPointId={activePointId}
+          onPointPress={handlePointPress}
+          surface="feed"
+        />
+      </View>
     </View>
   );
 }
@@ -1594,23 +2004,25 @@ function PostDetailView({
   detail,
   commentText,
   commentsExpanded,
-  onBack,
   onChangeCommentText,
   onToggleComments,
   onToggleLike,
   onToggleSave,
   onCreateComment,
+  selectedPointId,
+  onSelectPoint,
 }: {
   post: FeedItem;
   detail?: PostDetail;
   commentText: string;
   commentsExpanded: boolean;
-  onBack: () => void;
   onChangeCommentText: (value: string) => void;
   onToggleComments: () => void;
   onToggleLike: () => void;
   onToggleSave: () => void;
   onCreateComment: () => void;
+  selectedPointId?: string | null;
+  onSelectPoint?: (pointId: string) => void;
 }) {
   const route = detail?.trip.routePreview ?? post.trip.routePreview ?? [];
   const counts = detail?.counts ?? post._count;
@@ -1621,11 +2033,6 @@ function PostDetailView({
 
   return (
     <View style={styles.detailStack}>
-      <View style={styles.detailTopBar}>
-        <BackButton label="返回首页" onPress={onBack} />
-        <Text style={styles.detailTopTitle}>作品详情</Text>
-      </View>
-
       <View style={styles.postCard}>
         <View style={styles.authorRow}>
           <View style={styles.smallAvatar}>
@@ -1645,6 +2052,8 @@ function PostDetailView({
           route={route}
           title={detail?.title ?? post.title}
           cityName={detail?.cityName ?? post.cityName}
+          selectedPointId={selectedPointId}
+          onSelectPoint={onSelectPoint}
         />
         <View style={styles.actionGrid}>
           <Pressable style={[styles.actionButton, liked ? styles.actionButtonActive : null]} onPress={onToggleLike}>
@@ -1721,6 +2130,8 @@ function PostCard({
   onToggleSave,
   onChangeCommentText,
   onCreateComment,
+  selectedPointId,
+  onSelectPoint,
 }: {
   post: FeedItem;
   detail?: PostDetail;
@@ -1731,67 +2142,98 @@ function PostCard({
   onToggleSave?: () => void;
   onChangeCommentText?: (value: string) => void;
   onCreateComment?: () => void;
+  selectedPointId?: string | null;
+  onSelectPoint?: (pointId: string) => void;
 }) {
   const points = detail?.trip.routePreview ?? post.trip.routePreview ?? [];
   const counts = detail?.counts ?? post._count;
   const liked = detail?.viewerState?.liked ?? post.viewerState?.liked ?? false;
   const saved = detail?.viewerState?.saved ?? post.viewerState?.saved ?? false;
+  const title = detail?.title ?? post.title;
+  const summary = detail?.summary ?? post.summary;
+  const cityName = detail?.cityName ?? post.cityName;
+  const pointCount = detail?.pointCount ?? post.pointCount;
+  const authorHandle = post.author.username ?? post.author.displayName;
+
+  function handleMorePress() {
+    Alert.alert('路线操作', title, [
+      ...(onOpen ? [{ text: '查看详情', onPress: onOpen }] : []),
+      ...(onToggleSave ? [{ text: saved ? '取消收藏' : '收藏路线', onPress: onToggleSave }] : []),
+      { text: '取消', style: 'cancel' as const },
+    ]);
+  }
+
   return (
     <View style={styles.postCard}>
-      <Pressable style={styles.cardOpenArea} onPress={onOpen}>
-        <View style={styles.authorRow}>
-          <View style={styles.smallAvatar}>
-            <Text style={styles.smallAvatarText}>{post.author.displayName.slice(0, 1).toUpperCase()}</Text>
-          </View>
+      <View style={styles.postHeader}>
+        <Pressable style={styles.authorRow} onPress={onOpen}>
+          <LinearGradient colors={['#0ea5e9', '#1d4ed8']} style={styles.avatarRing}>
+            <View style={styles.smallAvatar}>
+              <Text style={styles.smallAvatarText}>{post.author.displayName.slice(0, 1).toUpperCase()}</Text>
+            </View>
+          </LinearGradient>
           <View style={styles.authorCopy}>
-            <Text style={styles.authorName}>{post.author.displayName}</Text>
-            <Text style={styles.hintText}>{formatDate(post.publishedAt)}</Text>
+            <Text style={styles.authorName}>{authorHandle}</Text>
+            <Text style={styles.postLocation}>
+              {cityName || 'TripIn'} · {formatDate(post.publishedAt)}
+            </Text>
           </View>
-        </View>
-        <Text style={styles.postTitle}>{post.title}</Text>
-        {post.summary ? <Text style={styles.postSummary}>{post.summary}</Text> : null}
-      </Pressable>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="打开路线操作菜单"
+          hitSlop={10}
+          style={styles.postMenuButton}
+          onPress={handleMorePress}
+        >
+          <Text style={styles.postMenu}>•••</Text>
+        </Pressable>
+      </View>
       <RouteMediaViewer
         trip={detail?.trip}
         route={points}
-        title={post.title}
-        cityName={post.cityName}
+        title={title}
+        cityName={cityName}
         compact={!expanded}
+        selectedPointId={selectedPointId}
+        onSelectPoint={onSelectPoint}
       />
-      <View style={styles.metaRow}>
-        <Text style={styles.metaPill}>{post.pointCount} 点位</Text>
-        <Text style={styles.metaPill}>{counts.comments} 评论</Text>
-      </View>
-      <View style={styles.actionGrid}>
-        <Pressable style={[styles.actionButton, liked ? styles.actionButtonActive : null]} onPress={onToggleLike}>
-          <Text style={[styles.actionButtonText, liked ? styles.actionButtonTextActive : null]}>
-            {liked ? '已赞' : '点赞'} · {counts.likes}
+      <View style={styles.socialActionRow}>
+        <Pressable style={styles.socialActionButton} onPress={onToggleLike}>
+          <Text style={[styles.socialActionIcon, liked ? styles.socialActionIconActive : null]}>
+            {liked ? '♥' : '♡'}
           </Text>
+          <Text style={[styles.socialActionText, liked ? styles.socialActionTextActive : null]}>喜欢</Text>
         </Pressable>
-        <Pressable style={[styles.actionButton, saved ? styles.actionButtonActive : null]} onPress={onToggleSave}>
-          <Text style={[styles.actionButtonText, saved ? styles.actionButtonTextActive : null]}>
-            {saved ? '已收藏' : '收藏'} · {counts.saves}
+        <Pressable style={styles.socialActionButton} onPress={onOpen}>
+          <Text style={styles.socialActionIcon}>◌</Text>
+          <Text style={styles.socialActionText}>评论</Text>
+        </Pressable>
+        <Pressable style={[styles.socialActionButton, styles.socialActionButtonLast]} onPress={onToggleSave}>
+          <Text style={[styles.socialActionIcon, saved ? styles.socialActionIconActive : null]}>
+            {saved ? '◆' : '◇'}
           </Text>
+          <Text style={[styles.socialActionText, saved ? styles.socialActionTextActive : null]}>收藏</Text>
         </Pressable>
       </View>
-      <View style={styles.commentComposer}>
-        <TextInput
-          value={commentText}
-          onChangeText={onChangeCommentText}
-          placeholder="直接评论这条路线"
-          style={[styles.input, styles.commentInput]}
-        />
-        <Pressable style={styles.commentSendButton} onPress={onCreateComment}>
-          <Text style={styles.commentSendText}>发送</Text>
-        </Pressable>
+      <Text style={styles.likeLine}>{counts.likes} 次喜欢</Text>
+      <Pressable style={styles.captionBlock} onPress={onOpen}>
+        <Text style={styles.captionLine}>
+          <Text style={styles.captionAuthor}>{authorHandle}</Text>
+          {summary ? ` ${summary}` : ` ${title}`}
+        </Text>
+      </Pressable>
+      <View style={styles.routeStatsRow}>
+        <Text style={styles.routeStat}>路线 · {pointCount} 个点位</Text>
+        <Text style={styles.routeStat}>{counts.comments} 条评论</Text>
+        <Text style={styles.routeStat}>{counts.saves} 次收藏</Text>
       </View>
-      <Pressable style={styles.expandButton} onPress={onOpen}>
-        <Text style={styles.expandButtonText}>查看详情与全部评论</Text>
+      <Pressable style={styles.feedCommentTeaser} onPress={onOpen}>
+        <Text style={styles.feedCommentTeaserText}>添加评论...</Text>
       </Pressable>
     </View>
   );
 }
-
 function AccountRow({
   title,
   meta,
@@ -2090,15 +2532,95 @@ function Stat({ value, label }: { value: string; label: string }) {
 const styles = StyleSheet.create({
   app: {
     flex: 1,
-    backgroundColor: '#f6f7f9',
+    backgroundColor: '#fbfcff',
   },
   body: {
     flex: 1,
   },
   screenContent: {
-    padding: 18,
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === 'android' ? 44 : 18,
     paddingBottom: 118,
     gap: 16,
+  },
+  feedContent: {
+    paddingTop: 6,
+    paddingBottom: 118,
+    backgroundColor: '#fbfcff',
+  },
+  feedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === 'android' ? 34 : 8,
+    paddingBottom: 12,
+  },
+  feedBrand: {
+    color: '#111827',
+    fontSize: 31,
+    lineHeight: 36,
+    fontWeight: '900',
+  },
+  feedSubtitle: {
+    color: '#667085',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  headerGradientButton: {
+    minHeight: 36,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+  },
+  headerGradientText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  storyRail: {
+    flexDirection: 'row',
+    gap: 15,
+    paddingHorizontal: 18,
+    paddingTop: 4,
+    paddingBottom: 14,
+  },
+  storyItem: {
+    width: 70,
+    alignItems: 'center',
+    gap: 6,
+  },
+  storyRing: {
+    width: 62,
+    height: 62,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storyAvatar: {
+    width: 55,
+    height: 55,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f7faff',
+    borderWidth: 2,
+    borderColor: '#fbfcff',
+  },
+  storyInitial: {
+    color: '#1d4ed8',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  storyName: {
+    width: '100%',
+    color: '#344054',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   centerState: {
     flex: 1,
@@ -2142,73 +2664,6 @@ const styles = StyleSheet.create({
     color: '#667085',
     fontSize: 14,
     lineHeight: 20,
-  },
-  appCover: {
-    minHeight: 190,
-    overflow: 'hidden',
-    borderRadius: 26,
-    backgroundColor: '#101828',
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  coverMapLine: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    top: 26,
-    height: 92,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    backgroundColor: '#172033',
-  },
-  coverDot: {
-    position: 'absolute',
-    width: 42,
-    height: 42,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#101828',
-  },
-  coverDotStart: {
-    left: 22,
-    top: 26,
-    backgroundColor: '#fbbf24',
-  },
-  coverDotMid: {
-    left: '48%',
-    top: 16,
-    backgroundColor: '#60a5fa',
-  },
-  coverDotEnd: {
-    right: 26,
-    top: 38,
-    backgroundColor: '#34d399',
-  },
-  coverDotText: {
-    color: '#101828',
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  coverCopy: {
-    marginTop: 112,
-    gap: 6,
-    padding: 18,
-  },
-  coverKicker: {
-    color: '#93c5fd',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  coverTitle: {
-    color: '#fff',
-    fontSize: 21,
-    lineHeight: 28,
-    fontWeight: '900',
   },
   panel: {
     gap: 12,
@@ -2329,20 +2784,35 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   postCard: {
-    gap: 12,
-    padding: 14,
-    borderRadius: 18,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e6e9ee',
+    gap: 10,
+    paddingVertical: 15,
+    backgroundColor: '#fbfcff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7edf8',
   },
   cardOpenArea: {
     gap: 12,
+  },
+  postHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 16,
   },
   authorRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  avatarRing: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   smallAvatar: {
     width: 38,
@@ -2350,49 +2820,95 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#111827',
+    backgroundColor: '#f7faff',
+    borderWidth: 2,
+    borderColor: '#fbfcff',
   },
   smallAvatarText: {
-    color: '#fff',
-    fontWeight: '800',
+    color: '#1d4ed8',
+    fontWeight: '900',
   },
   authorCopy: {
     flex: 1,
     gap: 2,
+    minWidth: 0,
   },
   authorName: {
     color: '#101828',
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '900',
+  },
+  postLocation: {
+    color: '#667085',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  postMenu: {
+    color: '#344054',
+    fontSize: 18,
+    lineHeight: 20,
+    fontWeight: '900',
+  },
+  postMenuButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
   },
   postTitle: {
     color: '#101828',
     fontSize: 20,
     fontWeight: '900',
+    paddingHorizontal: 16,
   },
   postSummary: {
     color: '#475467',
     fontSize: 15,
     lineHeight: 22,
+    paddingHorizontal: 16,
   },
   routeMediaViewer: {
     gap: 10,
   },
   viewerImageFrame: {
-    height: 330,
+    height: 360,
     overflow: 'hidden',
-    borderRadius: 22,
-    backgroundColor: '#eef1f5',
-    borderWidth: 1,
-    borderColor: '#e4e7ec',
+    borderRadius: 0,
+    backgroundColor: '#eef4ff',
     position: 'relative',
   },
   viewerImageFrameCompact: {
-    height: 270,
+    height: 300,
   },
   viewerImage: {
     width: '100%',
     height: '100%',
+    resizeMode: 'cover',
+  },
+  viewerRoutePanel: {
+    gap: 8,
+    paddingHorizontal: 0,
+  },
+  viewerRouteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 16,
+  },
+  viewerRouteTitle: {
+    color: '#101828',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  viewerRouteHint: {
+    flex: 1,
+    color: '#667085',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'right',
   },
   carouselButton: {
     position: 'absolute',
@@ -2419,7 +2935,7 @@ const styles = StyleSheet.create({
   imageCounterBadge: {
     position: 'absolute',
     right: 12,
-    bottom: 12,
+    top: 12,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
@@ -2444,60 +2960,54 @@ const styles = StyleSheet.create({
     width: 190,
   },
   generatedCover: {
-    minHeight: 132,
+    minHeight: 360,
     overflow: 'hidden',
     justifyContent: 'flex-end',
-    gap: 6,
+    gap: 11,
     padding: 16,
-    borderRadius: 20,
-    backgroundColor: '#e0f2fe',
-    borderWidth: 1,
-    borderColor: '#bae6fd',
+    borderRadius: 0,
+    backgroundColor: '#1d4ed8',
+    position: 'relative',
   },
-  generatedCoverLine: {
-    position: 'absolute',
-    left: 36,
-    right: 36,
-    top: 42,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: '#0f766e',
-    transform: [{ rotate: '-7deg' }],
+  generatedCoverCompact: {
+    minHeight: 300,
   },
-  generatedCoverPin: {
-    position: 'absolute',
-    width: 38,
-    height: 38,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#e0f2fe',
-  },
-  generatedCoverPinStart: {
-    left: 28,
-    top: 28,
-    backgroundColor: '#f59e0b',
-  },
-  generatedCoverPinEnd: {
-    right: 34,
-    top: 56,
-    backgroundColor: '#14b8a6',
-  },
-  generatedCoverPinText: {
-    color: '#101828',
-    fontSize: 13,
-    fontWeight: '900',
+  generatedPhotoNoise: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   generatedCoverKicker: {
-    color: '#0369a1',
+    color: 'rgba(255,255,255,0.86)',
     fontSize: 12,
     fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   generatedCoverTitle: {
-    color: '#0f172a',
-    fontSize: 20,
-    lineHeight: 26,
+    color: '#fff',
+    fontSize: 22,
+    lineHeight: 29,
+    fontWeight: '900',
+  },
+  generatedRouteMap: {
+    overflow: 'hidden',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.72)',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  generatedCoverMeta: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  generatedCoverMetaText: {
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    color: '#fff',
+    fontSize: 12,
     fontWeight: '900',
   },
   metaRow: {
@@ -2555,21 +3065,101 @@ const styles = StyleSheet.create({
   actionButtonTextActive: {
     color: '#fff',
   },
+  socialActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingTop: 2,
+  },
+  socialActionButton: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  socialActionButtonLast: {
+    marginLeft: 'auto',
+  },
+  socialActionIcon: {
+    color: '#101828',
+    fontSize: 22,
+    lineHeight: 24,
+    fontWeight: '900',
+  },
+  socialActionIconActive: {
+    color: '#1d4ed8',
+  },
+  socialActionText: {
+    color: '#344054',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  socialActionTextActive: {
+    color: '#1d4ed8',
+  },
+  likeLine: {
+    paddingHorizontal: 16,
+    color: '#101828',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  captionBlock: {
+    paddingHorizontal: 16,
+  },
+  captionLine: {
+    color: '#1f2937',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  captionAuthor: {
+    color: '#101828',
+    fontWeight: '900',
+  },
+  routeStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 16,
+  },
+  routeStat: {
+    color: '#667085',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
+  feedCommentTeaser: {
+    paddingHorizontal: 16,
+    paddingTop: 2,
+  },
+  feedCommentTeaserText: {
+    color: '#98a2b3',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   commentComposer: {
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
+    paddingHorizontal: 16,
   },
   commentInput: {
     flex: 1,
   },
+  feedCommentInput: {
+    minHeight: 38,
+    borderRadius: 999,
+    backgroundColor: '#f3f7ff',
+    borderColor: '#e4ecfb',
+    fontSize: 14,
+  },
   commentSendButton: {
-    minHeight: 46,
+    minHeight: 38,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
-    backgroundColor: '#111827',
+    borderRadius: 999,
+    backgroundColor: '#2563eb',
   },
   commentSendText: {
     color: '#fff',
@@ -2925,9 +3515,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 12,
     borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: 'rgba(251,252,255,0.97)',
     borderWidth: 1,
-    borderColor: '#e6e9ee',
+    borderColor: '#d9e4fb',
     elevation: 18,
     zIndex: 100,
   },
@@ -2939,7 +3529,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   navButtonActive: {
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#edf4ff',
   },
   navButtonText: {
     color: '#667085',
@@ -2947,7 +3537,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   navButtonTextActive: {
-    color: '#101828',
+    color: '#1d4ed8',
+  },
+  plusButtonShell: {
+    borderRadius: 999,
+    overflow: 'hidden',
   },
   plusButton: {
     width: 52,
@@ -2955,7 +3549,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#111827',
   },
   plusText: {
     color: '#fff',
@@ -2964,7 +3557,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   homeButton: {
-    backgroundColor: '#2563eb',
+    width: 56,
   },
   homeButtonText: {
     fontSize: 14,
