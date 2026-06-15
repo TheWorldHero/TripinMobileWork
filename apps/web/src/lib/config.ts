@@ -11,7 +11,7 @@
  *   · 要打包部署，请在设好该变量后再 `next build`（client 端的值在 build 时固定）。
  */
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:3001/api/v1';
+  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || 'http://101.132.146.92:3001/api/v1';
 
 /**
  * 后端站点根（去掉末尾的 /api/v1），用于拼接后端静态资源地址，

@@ -26,6 +26,7 @@ apps/web/public/uploads/*
 .claude/
 .m2repo/
 .tmp/
+*.tmp
 tmp/
 apps/mobile/.expo/
 dist-verify/
