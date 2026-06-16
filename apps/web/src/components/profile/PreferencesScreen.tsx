@@ -66,7 +66,7 @@ export function PreferencesScreen() {
   };
 
   return (
-    <div>
+    <div className="screen-fill screen-tinted">
       <TopBar title="设置" back>
         {saving ? <span className="topbar-action muted">保存中…</span> : null}
       </TopBar>
@@ -142,6 +142,7 @@ export function PreferencesScreen() {
           </div>
         </>
       )}
+      <div className="flex-grow" />
     </div>
   );
 }

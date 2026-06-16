@@ -23,7 +23,7 @@ export function FavoritesScreen({ initialItems }: { initialItems: FeedItem[] }) 
   };
 
   return (
-    <div>
+    <div className="screen-fill screen-tinted">
       <TopBar title="我的收藏" back />
       {error ? <div className="notice error">{error}</div> : null}
 
@@ -36,38 +36,46 @@ export function FavoritesScreen({ initialItems }: { initialItems: FeedItem[] }) 
           </Link>
         </div>
       ) : (
-        items.map((item) => {
-          const cover = mediaUrl(item.coverMedia);
-          const sketchPoints = (item.trip.routePreview ?? []).map((point, index) => ({
-            latitude: point.latitude,
-            longitude: point.longitude,
-            id: `${item.id}-${index}`,
-          }));
-          return (
-            <div key={item.id} className="draft-row">
-              <Link href={`/routes/${item.id}`} style={{ width: 64, flex: 'none' }}>
-                {cover ? (
-                  <img src={cover} alt={item.title} style={{ width: 64, height: 64, objectFit: 'cover' }} />
-                ) : (
-                  <RouteSketch points={sketchPoints} aspect={1} markers={false} emptyLabel="" />
-                )}
-              </Link>
-              <div className="draft-row-body">
-                <Link href={`/routes/${item.id}`}>
-                  <div className="draft-row-title">{item.title}</div>
-                </Link>
-                <div className="draft-row-meta">
-                  {[item.author.displayName, item.cityName, `${item.pointCount} 个点位`]
-                    .filter(Boolean)
-                    .join(' · ')}
+        <div className="screen-pad flex-grow">
+          <div className="card-list">
+            {items.map((item) => {
+              const cover = mediaUrl(item.coverMedia);
+              const sketchPoints = (item.trip.routePreview ?? []).map((point, index) => ({
+                latitude: point.latitude,
+                longitude: point.longitude,
+                id: `${item.id}-${index}`,
+              }));
+              return (
+                <div key={item.id} className="draft-row">
+                  <Link href={`/routes/${item.id}`} style={{ width: 64, flex: 'none' }}>
+                    {cover ? (
+                      <img
+                        src={cover}
+                        alt={item.title}
+                        style={{ width: 64, height: 64, objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <RouteSketch points={sketchPoints} aspect={1} markers={false} emptyLabel="" />
+                    )}
+                  </Link>
+                  <div className="draft-row-body">
+                    <Link href={`/routes/${item.id}`}>
+                      <div className="draft-row-title">{item.title}</div>
+                    </Link>
+                    <div className="draft-row-meta">
+                      {[item.author.displayName, item.cityName, `${item.pointCount} 个点位`]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </div>
+                  </div>
+                  <button type="button" className="mini-btn danger" onClick={() => unsave(item)}>
+                    移除
+                  </button>
                 </div>
-              </div>
-              <button type="button" className="mini-btn danger" onClick={() => unsave(item)}>
-                移除
-              </button>
-            </div>
-          );
-        })
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

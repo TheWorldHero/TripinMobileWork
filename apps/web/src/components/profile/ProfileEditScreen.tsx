@@ -64,7 +64,7 @@ export function ProfileEditScreen({ user }: { user: UserSummary }) {
   };
 
   return (
-    <div>
+    <div className="screen-fill">
       <TopBar title="编辑资料" back>
         <button type="button" className="topbar-action" onClick={save} disabled={saving}>
           {saving ? '保存中…' : '保存'}
@@ -95,7 +95,7 @@ export function ProfileEditScreen({ user }: { user: UserSummary }) {
         </button>
       </div>
 
-      <div style={{ padding: '8px 16px' }}>
+      <div className="flex-grow" style={{ padding: '8px 16px' }}>
         <div className="field">
           <label className="field-label">昵称</label>
           <input className="input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
@@ -118,6 +118,12 @@ export function ProfileEditScreen({ user }: { user: UserSummary }) {
             onChange={(event) => setBio(event.target.value)}
           />
         </div>
+      </div>
+
+      <div className="action-bar">
+        <button type="button" className="btn btn-gradient btn-block" onClick={save} disabled={saving}>
+          {saving ? '保存中…' : '保存'}
+        </button>
       </div>
     </div>
   );

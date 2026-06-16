@@ -77,7 +77,7 @@ export function NotificationsScreen() {
   };
 
   return (
-    <div>
+    <div className="screen-fill">
       <TopBar title="通知" back>
         {unread ? (
           <button type="button" className="topbar-action" onClick={markAll}>

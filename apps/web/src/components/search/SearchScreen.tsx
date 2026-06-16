@@ -58,7 +58,7 @@ export function SearchScreen() {
     places.length === 0;
 
   return (
-    <div>
+    <div className="screen-fill">
       <header className="topbar search-topbar">
         <button
           type="button"

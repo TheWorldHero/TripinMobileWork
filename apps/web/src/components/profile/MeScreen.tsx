@@ -67,7 +67,7 @@ export function MeScreen({
   };
 
   return (
-    <div>
+    <div className="screen-fill">
       <header className="topbar">
         <div className="topbar-title">{user.username ? `@${user.username}` : user.displayName}</div>
         <button type="button" className="topbar-action" onClick={logout} disabled={loggingOut}>
@@ -122,45 +122,56 @@ export function MeScreen({
         </button>
       </div>
 
-      {tab === 'posts' ? (
-        <PostGrid items={posts} emptyText="还没有发布过作品，去工作台发布第一条路线吧。" />
-      ) : null}
+      <div className="flex-grow">
+        {tab === 'posts' ? (
+          <PostGrid items={posts} emptyText="还没有发布过作品，去工作台发布第一条路线吧。" />
+        ) : null}
 
-      {tab === 'saves' ? <PostGrid items={saves} emptyText="还没有收藏内容。" /> : null}
+        {tab === 'saves' ? <PostGrid items={saves} emptyText="还没有收藏内容。" /> : null}
 
-      {tab === 'drafts' ? (
-        drafts.length === 0 ? (
-          <div className="empty-state">
-            <span>没有进行中的草稿。</span>
-            <Link href="/studio" className="btn btn-gradient">
-              创建新路线
-            </Link>
-          </div>
-        ) : (
-          <div>
-            {drafts.map((trip) => (
-              <div key={trip.id} className="draft-row">
-                <div className="draft-row-body">
-                  <div className="draft-row-title">
-                    {trip.title}
-                    {tripStatusBadge(trip.status)}
+        {tab === 'drafts' ? (
+          drafts.length === 0 ? (
+            <div className="empty-state">
+              <b>还没有草稿</b>
+              <span>去工作台开始搭建你的第一条路线。</span>
+              <Link href="/studio" className="btn btn-gradient">
+                创建新路线
+              </Link>
+            </div>
+          ) : (
+            <div className="screen-pad">
+              <div className="card-list">
+                {drafts.map((trip) => (
+                  <div key={trip.id} className="draft-row">
+                    <div className="draft-row-body">
+                      <div className="draft-row-title">
+                        {trip.title}
+                        {tripStatusBadge(trip.status)}
+                      </div>
+                      <div className="draft-row-meta">
+                        {trip.pointCount === 0 && trip.mediaCount === 0
+                          ? '空草稿 · 点「继续编辑」开始'
+                          : `${trip.pointCount} 个点位 · ${trip.mediaCount} 张图片${
+                              trip.startedAt ? ` · ${formatDateTime(trip.startedAt)}` : ''
+                            }`}
+                      </div>
+                    </div>
+                    <Link href={`/studio/${trip.id}`} className="mini-btn">
+                      继续编辑
+                    </Link>
+                    <button type="button" className="mini-btn danger" onClick={() => deleteTrip(trip)}>
+                      删除
+                    </button>
                   </div>
-                  <div className="draft-row-meta">
-                    {trip.pointCount} 个点位 · {trip.mediaCount} 张图片
-                    {trip.startedAt ? ` · ${formatDateTime(trip.startedAt)}` : ''}
-                  </div>
-                </div>
-                <Link href={`/studio/${trip.id}`} className="mini-btn">
-                  继续编辑
-                </Link>
-                <button type="button" className="mini-btn danger" onClick={() => deleteTrip(trip)}>
-                  删除
-                </button>
+                ))}
               </div>
-            ))}
-          </div>
-        )
-      ) : null}
+              <Link href="/studio" className="btn btn-secondary btn-block" style={{ marginTop: 12 }}>
+                ＋ 创建新路线
+              </Link>
+            </div>
+          )
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -93,7 +93,7 @@ export function RecordScreen() {
   };
 
   return (
-    <div>
+    <div className="screen-fill screen-tinted">
       <TopBar title="即时记录" />
 
       {error ? <div className="notice error">{error}</div> : null}
@@ -106,63 +106,68 @@ export function RecordScreen() {
         </div>
       ) : null}
 
-      <section className="studio-section" style={{ borderBottom: 'none' }}>
-        <p className="studio-section-sub" style={{ marginTop: 0 }}>
-          走到哪记到哪：自动获取当前位置，生成一个点位放进路线草稿。
-        </p>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(event) => {
-            pickImages(event.target.files);
-            event.target.value = '';
-          }}
-        />
-        <div className="upload-box" onClick={() => fileInputRef.current?.click()}>
-          <span>＋ 添加现场照片</span>
-          <span style={{ fontWeight: 400, fontSize: 12 }}>可不选，之后也能补</span>
-        </div>
-        {images.length ? (
-          <div className="image-strip">
-            {images.map((image) => (
-              <span key={image.previewUrl} className="image-strip-item">
-                <img src={image.previewUrl} alt="待上传图片" />
-                <button
-                  type="button"
-                  className="image-strip-remove"
-                  aria-label="移除图片"
-                  onClick={() =>
-                    setImages((current) => {
-                      URL.revokeObjectURL(image.previewUrl);
-                      return current.filter((candidate) => candidate.previewUrl !== image.previewUrl);
-                    })
-                  }
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+      <div className="screen-pad flex-grow">
+        <section className="card">
+          <div className="card-head">
+            <b>记录此刻</b>
+            <span>走到哪记到哪：自动获取当前位置，生成一个点位放进路线草稿。</span>
           </div>
-        ) : null}
 
-        <div className="field" style={{ marginTop: 14 }}>
-          <label className="field-label">此刻想说</label>
-          <textarea
-            className="textarea"
-            value={note}
-            placeholder="一句话记下此刻（可不填）"
-            onChange={(event) => setNote(event.target.value)}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(event) => {
+              pickImages(event.target.files);
+              event.target.value = '';
+            }}
           />
-        </div>
+          <div className="upload-box" onClick={() => fileInputRef.current?.click()}>
+            <span>＋ 添加现场照片</span>
+            <span style={{ fontWeight: 400, fontSize: 12 }}>可不选，之后也能补</span>
+          </div>
+          {images.length ? (
+            <div className="image-strip">
+              {images.map((image) => (
+                <span key={image.previewUrl} className="image-strip-item">
+                  <img src={image.previewUrl} alt="待上传图片" />
+                  <button
+                    type="button"
+                    className="image-strip-remove"
+                    aria-label="移除图片"
+                    onClick={() =>
+                      setImages((current) => {
+                        URL.revokeObjectURL(image.previewUrl);
+                        return current.filter((candidate) => candidate.previewUrl !== image.previewUrl);
+                      })
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
 
+          <div className="field" style={{ marginTop: 14, marginBottom: 0 }}>
+            <label className="field-label">此刻想说</label>
+            <textarea
+              className="textarea"
+              value={note}
+              placeholder="一句话记下此刻（可不填）"
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </div>
+        </section>
+      </div>
+
+      <div className="action-bar">
         <button type="button" className="btn btn-gradient btn-block" onClick={record} disabled={working}>
           {working ? '正在记录…' : '获取定位并记录'}
         </button>
-      </section>
+      </div>
     </div>
   );
 }

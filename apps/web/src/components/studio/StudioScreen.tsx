@@ -483,11 +483,13 @@ export function StudioScreen({ tripId }: { tripId?: string }) {
             </div>
           )}
 
-          <div style={{ padding: '4px 14px 8px' }}>
-            <button type="button" className="btn btn-gradient btn-block" onClick={openPublish} disabled={pointCount === 0}>
-              发布路线（{pointCount} 个点位）
-            </button>
-          </div>
+          {pointCount > 0 ? (
+            <div className="action-bar">
+              <button type="button" className="btn btn-gradient btn-block" onClick={openPublish}>
+                发布路线（{pointCount} 个点位）
+              </button>
+            </div>
+          ) : null}
         </>
       ) : null}
 

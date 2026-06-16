@@ -127,12 +127,106 @@ img {
 }
 
 .phone-main {
+  display: flex;
+  flex-direction: column;
   padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + 16px);
   min-height: 100dvh;
 }
 
 .phone-main.no-tabbar {
   padding-bottom: 32px;
+}
+
+/* ---------- Layout primitives: screens own their height ---------- */
+
+/* A screen root that grows to fill the phone column, so short content can
+   bottom-anchor a CTA / center an empty state instead of leaving dead white. */
+.screen-fill {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.flex-grow {
+  flex: 1;
+}
+
+.push-bottom {
+  margin-top: auto;
+}
+
+/* Soft warm canvas so white cards read as figure-on-ground. */
+.screen-tinted {
+  background: var(--bg-canvas);
+}
+
+.screen-pad {
+  padding: 14px;
+}
+
+/* Bottom-docked primary action bar (sticky above the tab bar; pushed to the
+   bottom of a .screen-fill column when content is short). */
+.action-bar {
+  margin-top: auto;
+  position: sticky;
+  bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+  z-index: 10;
+}
+
+.action-bar.no-tab {
+  bottom: 0;
+}
+
+.action-bar .btn {
+  flex: 1;
+}
+
+/* Card surfaces (uses the existing --surface / --shadow-card tokens). */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  padding: 16px;
+}
+
+.card-list {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.card-list .draft-row:last-child,
+.card-list .point-row:last-child {
+  border-bottom: none;
+}
+
+.card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 14px;
+}
+
+.card-head b {
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ink-strong);
+}
+
+.card-head span {
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.5;
 }
 
 /* ---------- Top bar ---------- */
@@ -1545,10 +1639,13 @@ img {
 
 .empty-state {
   display: flex;
+  flex: 1;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 56px 24px;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46dvh;
+  padding: 40px 24px;
   text-align: center;
   color: var(--ink-muted);
 }
@@ -2308,12 +2405,13 @@ img {
 /* ---------- 偏好设置 ---------- */
 
 .pref-group {
-  padding: 4px 0 8px;
-  border-bottom: 8px solid var(--bg-soft);
-}
-
-.pref-group:last-child {
-  border-bottom: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  margin: 12px 14px 0;
+  padding: 2px 0;
+  overflow: hidden;
 }
 
 .pref-group-title {
