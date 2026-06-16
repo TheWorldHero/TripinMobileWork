@@ -455,3 +455,29 @@ CREATE INDEX IF NOT EXISTS "UserFollow_followerId_idx" ON "UserFollow"("follower
 
 CREATE INDEX IF NOT EXISTS "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt");
 CREATE INDEX IF NOT EXISTS "Notification_userId_isRead_idx" ON "Notification"("userId", "isRead");
+
+-- ───────────────────────────────────────────────────────────────
+-- LBS 附近查询：帖子代表坐标 + 索引
+--   · latitude/longitude + 复合 btree 索引：bbox 预过滤 + Haversine 排序（任意 Postgres 可用）
+--   · geography(Point) + GiST 索引：PostGIS ST_DWithin 路径（仅在 postgis 扩展存在时建立）
+-- ───────────────────────────────────────────────────────────────
+
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "latitude" DECIMAL(10,7);
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "longitude" DECIMAL(10,7);
+CREATE INDEX IF NOT EXISTS "Post_latitude_longitude_idx" ON "Post"("latitude", "longitude");
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') THEN
+    BEGIN
+      ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "geog" geography(Point, 4326);
+      UPDATE "Post"
+         SET "geog" = ST_SetSRID(ST_MakePoint("longitude", "latitude"), 4326)::geography
+       WHERE "geog" IS NULL AND "latitude" IS NOT NULL AND "longitude" IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS "Post_geog_gix" ON "Post" USING GIST ("geog");
+    EXCEPTION WHEN others THEN
+      -- PostGIS present but spatial column/index setup failed: Haversine path still works.
+      NULL;
+    END;
+  END IF;
+END $$;

@@ -16,6 +16,7 @@ public class PostsService {
   private final JsonSupport json;
   private final UserService userService;
   private final TripsService tripsService;
+  private final CacheService cacheService;
   private final TransactionTemplate transactionTemplate;
 
   public PostsService(
@@ -23,16 +24,46 @@ public class PostsService {
       JsonSupport json,
       UserService userService,
       TripsService tripsService,
+      CacheService cacheService,
       TransactionTemplate transactionTemplate) {
     this.db = db;
     this.json = json;
     this.userService = userService;
     this.tripsService = tripsService;
+    this.cacheService = cacheService;
     this.transactionTemplate = transactionTemplate;
   }
 
   public Map<String, Object> getPost(String viewerUserId, String postId) {
     userService.ensureExists(viewerUserId);
+
+    // 帖子详情的"可共享"部分走 Redis 缓存（Cache-Aside + 三防）；不存在时缓存空值占位。
+    Map<String, Object> result =
+        cacheService.getPostDetail(postId, () -> loadSharedPostDetail(postId));
+    if (result == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found");
+    }
+
+    // 浏览者相关状态（是否点赞/收藏）按用户变化，不进缓存，每次实时查。
+    Map<String, Object> viewerState = new LinkedHashMap<>();
+    viewerState.put(
+        "liked",
+        db.first(
+                "select id from \"PostLike\" where \"postId\" = :postId and \"userId\" = :userId",
+                Map.of("postId", postId, "userId", viewerUserId))
+            != null);
+    viewerState.put(
+        "saved",
+        db.first(
+                "select id from \"PostSave\" where \"postId\" = :postId and \"userId\" = :userId",
+                Map.of("postId", postId, "userId", viewerUserId))
+            != null);
+    result.put("viewerState", viewerState);
+    return result;
+  }
+
+  /** 帖子详情的可共享部分（与浏览者无关，可缓存）。不存在返回 null（由缓存层落空值占位防穿透）。 */
+  private Map<String, Object> loadSharedPostDetail(String postId) {
     Map<String, Object> row =
         db.first(
             """
@@ -62,7 +93,7 @@ public class PostsService {
             Map.of("id", postId));
 
     if (row == null) {
-      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found");
+      return null;
     }
 
     Map<String, Object> result = new LinkedHashMap<>();
@@ -90,21 +121,6 @@ public class PostsService {
     counts.put("saves", json.intValue(row.get("saves_count")));
     counts.put("comments", json.intValue(row.get("comments_count")));
     result.put("counts", counts);
-
-    Map<String, Object> viewerState = new LinkedHashMap<>();
-    viewerState.put(
-        "liked",
-        db.first(
-                "select id from \"PostLike\" where \"postId\" = :postId and \"userId\" = :userId",
-                Map.of("postId", postId, "userId", viewerUserId))
-            != null);
-    viewerState.put(
-        "saved",
-        db.first(
-                "select id from \"PostSave\" where \"postId\" = :postId and \"userId\" = :userId",
-                Map.of("postId", postId, "userId", viewerUserId))
-            != null);
-    result.put("viewerState", viewerState);
     return result;
   }
 
@@ -135,6 +151,8 @@ public class PostsService {
               """,
               Map.of("id", tripId));
         });
+
+    cacheService.evictPostDetail(postId);
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("ok", true);

@@ -20,13 +20,19 @@ public class InteractionsService {
   private final JsonSupport json;
   private final UserService userService;
   private final EventPublisher events;
+  private final CacheService cacheService;
 
   public InteractionsService(
-      DbSupport db, JsonSupport json, UserService userService, EventPublisher events) {
+      DbSupport db,
+      JsonSupport json,
+      UserService userService,
+      EventPublisher events,
+      CacheService cacheService) {
     this.db = db;
     this.json = json;
     this.userService = userService;
     this.events = events;
+    this.cacheService = cacheService;
   }
 
   public Map<String, Object> likePost(String userId, String postId) {
@@ -101,6 +107,7 @@ public class InteractionsService {
     logEvent(userId, postId, "post_commented", Map.of("contentLength", request.content().length()));
     events.publish(
         DomainEvent.postCommented(userId, json.stringValue(post.get("author_id")), postId, commentId));
+    cacheService.evictPostDetail(postId);
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("id", comment.get("id"));
@@ -222,6 +229,9 @@ public class InteractionsService {
   }
 
   private Map<String, Object> getPostInteractionState(String postId, String userId) {
+    // 互动改变了帖子的点赞/收藏/评论计数，精准失效帖子详情缓存（写操作失效）。
+    cacheService.evictPostDetail(postId);
+
     Map<String, Object> response = new LinkedHashMap<>();
     response.put("postId", postId);
 

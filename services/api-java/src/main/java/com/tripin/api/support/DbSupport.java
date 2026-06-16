@@ -10,12 +10,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class DbSupport {
   private final NamedParameterJdbcTemplate jdbc;
+  private final BenchMetrics metrics;
 
-  public DbSupport(NamedParameterJdbcTemplate jdbc) {
+  public DbSupport(NamedParameterJdbcTemplate jdbc, BenchMetrics metrics) {
     this.jdbc = jdbc;
+    this.metrics = metrics;
   }
 
   public List<Map<String, Object>> list(String sql, Map<String, ?> params) {
+    metrics.incDbQuery();
     return jdbc.queryForList(sql, params == null ? Collections.emptyMap() : params);
   }
 
@@ -25,6 +28,7 @@ public class DbSupport {
   }
 
   public String string(String sql, Map<String, ?> params) {
+    metrics.incDbQuery();
     try {
       return jdbc.queryForObject(sql, params, String.class);
     } catch (EmptyResultDataAccessException exception) {
@@ -33,6 +37,7 @@ public class DbSupport {
   }
 
   public Integer integer(String sql, Map<String, ?> params) {
+    metrics.incDbQuery();
     try {
       return jdbc.queryForObject(sql, params, Integer.class);
     } catch (EmptyResultDataAccessException exception) {
@@ -41,6 +46,7 @@ public class DbSupport {
   }
 
   public Long longValue(String sql, Map<String, ?> params) {
+    metrics.incDbQuery();
     try {
       return jdbc.queryForObject(sql, params, Long.class);
     } catch (EmptyResultDataAccessException exception) {
@@ -49,6 +55,7 @@ public class DbSupport {
   }
 
   public int update(String sql, Map<String, ?> params) {
+    metrics.incDbQuery();
     return jdbc.update(sql, params == null ? Collections.emptyMap() : params);
   }
 }
