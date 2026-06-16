@@ -4,6 +4,7 @@ import com.tripin.api.service.CacheService;
 import com.tripin.api.support.BenchMetrics;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/v1/_bench")
+@ConditionalOnProperty(name = "tripin.bench.enabled", havingValue = "true")
 public class BenchController {
   private final BenchMetrics metrics;
   private final CacheService cacheService;
